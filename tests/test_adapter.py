@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from harness.adapter import GoalScope, GoalState, ToolAdapter, load_tools, truncate
+from harness.adapter import GoalScope, GoalState, RetryPolicy, ToolAdapter, load_tools, truncate
 from harness.events import EventLog
 
 BASE = "http://fielddesk.test"
@@ -32,7 +32,9 @@ def read_events(tmp_path):
         ("check_day_availability", {"region": "R03", "date": "next tuesday", "service": "x"}, "schema"),
         ("get_customer_appointments", {"customer_id": 12}, "out of scope"),
         ("get_appointment", {"appointment_id": 999}, "out of scope"),
-        ("check_day_availability", {"region": "R04", "date": "2026-11-05", "service": "x"}, "out of scope"),
+        ("search_availability", {"service": "x", "date_from": "2026-11-05", "date_to": "2026-11-06",
+                                 "regions": []}, "schema"),
+        ("list_technicians", {"region": "north", "skill": "hvac"}, "schema"),
         ("reschedule_appointment", {"appointment_id": 102, "slot_id": 5}, "out of scope"),
         ("drop_tables", {}, "unknown tool"),
     ],
@@ -142,6 +144,61 @@ async def test_events_carry_ids(tmp_path):
     for e in read_events(tmp_path):
         assert e["trial_id"] == "tr_test" and e["goal_id"] == "g_0007"
         assert e["logical_op_id"] == "op_0007_01" and e["model_call_id"] == "mc_0007_01"
+
+
+async def test_availability_is_public_and_search_params_are_built(tmp_path):
+    seen = []
+    adapter, _ = make_adapter(tmp_path, lambda req: seen.append(req) or httpx.Response(200, json={"slots": []}))
+    state = GoalState()
+    await adapter.call(scope(), state, "check_day_availability",
+                       {"region": "R04", "date": "2026-11-05", "service": "hvac_repair"})
+    await adapter.call(scope(), state, "search_availability",
+                       {"service": "hvac_repair", "date_from": "2026-11-05", "date_to": "2026-11-07",
+                        "regions": ["R03", "R04"]})
+    await adapter.call(scope(), state, "list_technicians", {"region": "R09", "skill": "hvac"})
+    assert state.invalid_arguments == 0
+    assert seen[1].url.path == "/availability/search"
+    assert dict(seen[1].url.params) == {"service": "hvac_repair", "from": "2026-11-05", "to": "2026-11-07",
+                                        "regions": "R03,R04"}
+    assert seen[2].url.path == "/technicians"
+
+
+class NoJitter:
+    def uniform(self, a, b):
+        return b
+
+
+async def test_scripted_retry_policy_labels_retries_and_honors_retry_after(tmp_path):
+    responses = [httpx.Response(503, headers={"Retry-After": "2"}, json={"error": {"message": "busy"}}),
+                 httpx.Response(500, json={"error": {"message": "boom"}}),
+                 httpx.Response(200, json={"appointment_id": 101})]
+    waits = []
+
+    async def fake_sleep(s):
+        waits.append(s)
+
+    adapter, _ = make_adapter(tmp_path, lambda req: responses.pop(0))
+    adapter.sleep = fake_sleep
+    s = scope()
+    s.actor_kind = "scripted"
+    state = GoalState()
+    out = await adapter.call(s, state, "get_appointment", {"appointment_id": 101}, retry=RetryPolicy(rng=NoJitter()))
+    assert out["appointment_id"] == 101
+    assert waits == [2.0, 1.0]  # Retry-After honored, then backoff min(8, 0.5 * 2**1)
+    attempts = [e for e in read_events(tmp_path) if e["event_type"] == "http.attempt"]
+    assert [(a["attempt_n"], a["retry_layer"]) for a in attempts] == [(1, "none"), (2, "scripted"), (3, "scripted")]
+    assert len({a["logical_op_id"] for a in attempts}) == 1
+    assert attempts[0]["actor_id"] == "scripted_0007"
+    assert state.attempts == 3 and state.gate_rejections == 1
+
+
+async def test_retry_policy_does_not_retry_409(tmp_path):
+    calls = []
+    adapter, _ = make_adapter(tmp_path, lambda req: calls.append(req) or httpx.Response(
+        409, json={"error": {"message": "taken"}}))
+    out = await adapter.call(scope(), GoalState(), "reschedule_appointment", {"appointment_id": 101, "slot_id": 5},
+                             retry=RetryPolicy(rng=NoJitter()))
+    assert out["error"]["type"] == "http_409" and len(calls) == 1
 
 
 def test_truncate_keeps_under_limit_with_counts():

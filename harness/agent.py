@@ -47,6 +47,8 @@ class GoalOutcome:
     change_id: int | None = None
     deferred_reason: str | None = None
     provider_error: str | None = None
+    gate_rejections: int = 0
+    attempts: int = 0
     steps: list[dict] = field(default_factory=list)
 
 
@@ -171,13 +173,24 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
             await loop()
     except TimeoutError:
         out.end_reason, out.limit = "limit_reached", "deadline"
-    out.tool_calls = state.tool_calls
-    out.change_id = state.change_id
-    out.deferred_reason = state.deferred_reason
-    out.duration_s = round(time.monotonic() - t_start, 3)
+    finish(out, state, t_start)
     events.emit("goal.ended", **ids, task_id=task["task_id"], outcome=out.end_reason, limit=out.limit,
                 change_id=out.change_id, deferred_reason=out.deferred_reason, model_calls=out.model_calls,
                 tool_calls=out.tool_calls, input_tokens=out.input_tokens, cached_tokens=out.cached_tokens,
                 output_tokens=out.output_tokens, cost_usd=round(out.cost_usd, 6), duration_s=out.duration_s,
-                provider_error=out.provider_error, invalid_arguments=state.invalid_arguments)
+                provider_error=out.provider_error, invalid_arguments=state.invalid_arguments,
+                gate_rejections=state.gate_rejections, attempts=state.attempts)
     return out
+
+
+def finish(out, state: GoalState, t_start: float) -> None:
+    """Copy goal state into the outcome. A goal with no effect whose every request the gate refused is `rejected`."""
+    out.tool_calls = state.tool_calls
+    out.change_id = state.change_id
+    out.deferred_reason = state.deferred_reason
+    out.duration_s = round(time.monotonic() - t_start, 3)
+    out.gate_rejections = state.gate_rejections
+    out.attempts = state.attempts
+    if (out.change_id is None and out.end_reason not in ("deferred", "provider_failed")
+            and state.gate_rejections > 0 and state.non_rejected_attempts == 0):
+        out.end_reason = "rejected"

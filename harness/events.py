@@ -19,8 +19,12 @@ ENVELOPE_KEYS = [
     "http_status", "latency_ms", "timeout_ms", "retry_after_s",
 ]
 
-# Which file each event type goes to inside the trial directory.
-STREAMS = {"model.call": "model_calls.jsonl", "oracle.verdict": "oracle.jsonl"}
+# Which file each event type goes to inside the trial directory. An explicit `stream=` on emit overrides this.
+STREAMS = {
+    "model.call": "model_calls.jsonl", "oracle.verdict": "oracle.jsonl", "fault.applied": "fault.jsonl",
+    "fault.removed": "fault.jsonl", "fault.canary": "fault.jsonl", "trial.state": "trial.jsonl",
+    "runner.sample": "runner.jsonl",
+}
 DEFAULT_STREAM = "client.jsonl"
 
 
@@ -53,7 +57,7 @@ class EventLog:
         self.context = {"phase": None, "fault_state": None}  # updated by the controller
         self._files: dict[str, object] = {}
 
-    def emit(self, event_type: str, **fields) -> dict:
+    def emit(self, event_type: str, stream: str | None = None, **fields) -> dict:
         record = {k: None for k in ENVELOPE_KEYS}
         record.update(self.base)
         record.update(self.context)
@@ -61,12 +65,16 @@ class EventLog:
         record["ts_mono_ns"] = time.monotonic_ns()
         record["event_type"] = event_type
         record.update(fields)
-        name = STREAMS.get(event_type, DEFAULT_STREAM)
+        name = f"{stream}.jsonl" if stream else STREAMS.get(event_type, DEFAULT_STREAM)
         f = self._files.get(name)
         if f is None:
             f = self._files[name] = (self.dir / name).open("a", buffering=1)
         f.write(json.dumps(record, default=str) + "\n")
         return record
+
+    def flush(self) -> None:
+        for f in self._files.values():
+            f.flush()
 
     def close(self) -> None:
         for f in self._files.values():

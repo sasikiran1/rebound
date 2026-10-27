@@ -9,14 +9,18 @@ from __future__ import annotations
 import datetime as dt
 import os
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import asyncpg
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from fielddesk.db import db
-from fielddesk.requestlog import RequestLogMiddleware
+from fielddesk.gate import Gate, GateMiddleware
+from fielddesk.requestlog import RequestLogMiddleware, counters
+from fielddesk.sampler import Sampler
 
 SLOT_CONFLICT = "appointments_one_scheduled_per_slot"
 KEY_CONFLICT = "appointment_changes_idempotency_key"
@@ -27,22 +31,45 @@ class ApiError(Exception):
         self.status, self.type, self.message = status, type_, message
 
 
+def gate_from_env() -> Gate | None:
+    """Read once at startup; FieldDesk restarts before every trial."""
+    if os.environ.get("GATE_ENABLED", "false").lower() != "true":
+        return None
+    return Gate(
+        tokens=int(os.environ.get("GATE_TOKENS", str(db.size))),
+        queue_max=int(os.environ.get("GATE_QUEUE_MAX", str(2 * db.size))),
+        queue_wait_s=float(os.environ.get("GATE_QUEUE_WAIT_MS", "1500")) / 1000,
+    )
+
+
+gate = gate_from_env()
+sampler = Sampler(os.environ.get("SAMPLE_LOG"), counters, db, gate)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if os.environ.get("GATE_ENABLED", "false").lower() == "true":
-        raise RuntimeError("GATE_ENABLED=true but the admission gate is not implemented yet")
     await db.open()
+    sampler.start()
     yield
+    sampler.stop()
     await db.close()
 
 
 app = FastAPI(title="FieldDesk", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+# Starlette runs the last-added middleware first: request log (outermost) -> gate -> routes.
+app.add_middleware(GateMiddleware, gate=gate, retry_after_s=int(os.environ.get("GATE_RETRY_AFTER_S", "2")))
 app.add_middleware(RequestLogMiddleware, path=os.environ.get("REQUEST_LOG"))
 
 
 @app.exception_handler(ApiError)
 async def api_error_handler(_request: Request, exc: ApiError):
     return JSONResponse({"error": {"type": exc.type, "message": exc.message}}, status_code=exc.status)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_request: Request, exc: RequestValidationError):
+    problems = "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())
+    return JSONResponse({"error": {"type": "invalid_request", "message": problems[:300]}}, status_code=422)
 
 
 def slot_json(row) -> dict:
@@ -60,16 +87,18 @@ def appointment_json(row) -> dict:
         "customer_id": row["customer_id"],
         "status": row["status"],
         "service": row["service"],
+        "required_skill": row["skill"],
         **slot_json(row),
     }
 
 
 APPOINTMENT_SELECT = """
-    SELECT a.id, a.customer_id, a.status, st.code AS service, a.slot_id,
+    SELECT a.id, a.customer_id, a.status, st.code AS service, sk.code AS skill, a.slot_id,
            s.slot_date, s.starts_at, s.technician_id
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN service_types st ON st.id = a.service_type_id
+    JOIN skills sk ON sk.id = st.skill_id
 """
 
 
@@ -135,6 +164,108 @@ async def day_availability(region: str, date: dt.date, service: str):
         "service": service,
         "count": len(rows),
         "slots": [slot_json(r) for r in rows],
+    }
+
+
+SEARCH_LIMIT = 50
+MAX_SEARCH_DAYS = 21
+
+
+@app.get("/availability/search")
+async def search_availability(
+    service: str,
+    date_from: Annotated[dt.date, Query(alias="from")],
+    date_to: Annotated[dt.date, Query(alias="to")],
+    regions: Annotated[str, Query(description="comma-separated region codes; the first one ranks by distance")],
+):
+    """Open slots over a date range for technicians covering any of the regions, ranked by distance from the
+    first region. Multi-day, multi-region join: the expensive path."""
+    codes = list(dict.fromkeys(c.strip() for c in regions.split(",") if c.strip()))
+    if not codes:
+        raise ApiError(422, "invalid_regions", "at least one region code is required")
+    if date_to < date_from or (date_to - date_from).days >= MAX_SEARCH_DAYS:
+        raise ApiError(422, "invalid_range", f"need from <= to and at most {MAX_SEARCH_DAYS} days")
+    async with db.acquire() as conn:
+        ids = await conn.fetchrow(
+            "SELECT (SELECT skill_id FROM service_types WHERE code = $1) AS skill_id, "
+            "(SELECT array_agg(id ORDER BY array_position($2::text[], code)) FROM regions "
+            " WHERE code = ANY($2::text[])) AS region_ids",
+            service, codes,
+        )
+        if ids["skill_id"] is None or ids["region_ids"] is None or len(ids["region_ids"]) != len(codes):
+            raise ApiError(422, "unknown_code", f"unknown service {service!r} or region in {codes}")
+        rows = await conn.fetch(
+            """
+            SELECT s.id AS slot_id, s.slot_date, s.starts_at, s.technician_id, hr.code AS technician_home_region,
+                   min(rd.distance) AS distance, array_agg(DISTINCT r.code ORDER BY r.code) AS covers,
+                   count(*) OVER () AS total
+            FROM slots s
+            JOIN technician_skills ts ON ts.technician_id = s.technician_id AND ts.skill_id = $1
+            JOIN technician_regions tr ON tr.technician_id = s.technician_id AND tr.region_id = ANY($2::smallint[])
+            JOIN regions r ON r.id = tr.region_id
+            JOIN region_distances rd ON rd.from_region = $3 AND rd.to_region = tr.region_id
+            JOIN technicians t ON t.id = s.technician_id
+            JOIN regions hr ON hr.id = t.home_region
+            WHERE s.slot_date BETWEEN $4 AND $5
+              AND NOT EXISTS (
+                  SELECT 1 FROM appointments a WHERE a.slot_id = s.id AND a.status = 'scheduled')
+            GROUP BY s.id, s.slot_date, s.starts_at, s.technician_id, hr.code
+            ORDER BY distance, s.slot_date, s.starts_at, s.technician_id
+            LIMIT $6
+            """,
+            ids["skill_id"], ids["region_ids"], ids["region_ids"][0], date_from, date_to, SEARCH_LIMIT,
+        )
+    return {
+        "service": service,
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "regions": codes,
+        "total_count": rows[0]["total"] if rows else 0,
+        "slots": [
+            {**slot_json(r), "technician_home_region": r["technician_home_region"], "distance": r["distance"],
+             "covers_regions": list(r["covers"])}
+            for r in rows
+        ],
+    }
+
+
+@app.get("/technicians")
+async def list_technicians(region: str, skill: str):
+    async with db.acquire() as conn:
+        ids = await conn.fetchrow(
+            "SELECT (SELECT id FROM regions WHERE code = $1) AS region_id, "
+            "(SELECT id FROM skills WHERE code = $2) AS skill_id",
+            region, skill,
+        )
+        if ids["region_id"] is None or ids["skill_id"] is None:
+            raise ApiError(422, "unknown_code", f"unknown region {region!r} or skill {skill!r}")
+        rows = await conn.fetch(
+            """
+            SELECT t.id, hr.code AS home_region,
+                   (SELECT array_agg(sk.code ORDER BY sk.code) FROM technician_skills x
+                    JOIN skills sk ON sk.id = x.skill_id WHERE x.technician_id = t.id) AS skills,
+                   (SELECT array_agg(rg.code ORDER BY rg.code) FROM technician_regions y
+                    JOIN regions rg ON rg.id = y.region_id WHERE y.technician_id = t.id) AS covers,
+                   (SELECT count(*) FROM slots s WHERE s.technician_id = t.id AND NOT EXISTS (
+                        SELECT 1 FROM appointments a WHERE a.slot_id = s.id AND a.status = 'scheduled'))
+                       AS open_slots
+            FROM technicians t
+            JOIN technician_regions tr ON tr.technician_id = t.id AND tr.region_id = $1
+            JOIN technician_skills ts ON ts.technician_id = t.id AND ts.skill_id = $2
+            JOIN regions hr ON hr.id = t.home_region
+            ORDER BY t.id
+            """,
+            ids["region_id"], ids["skill_id"],
+        )
+    return {
+        "region": region,
+        "skill": skill,
+        "count": len(rows),
+        "technicians": [
+            {"technician_id": r["id"], "home_region": r["home_region"], "skills": list(r["skills"]),
+             "covers_regions": list(r["covers"]), "open_slots_in_horizon": r["open_slots"]}
+            for r in rows
+        ],
     }
 
 

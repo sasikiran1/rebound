@@ -1,7 +1,7 @@
 """Pure-ASGI middleware: one `backend.request` JSONL line per request.
 
-It echoes the X-RB-* identity headers for joining with client events. Nothing here reads them for any
-decision.
+It is the outermost middleware, so `total_ms` covers the gate queue and the handler. It echoes the X-RB-*
+identity headers for joining with client events. Nothing here reads them for any decision.
 """
 
 from __future__ import annotations
@@ -22,6 +22,15 @@ ECHOED = {
 UNLOGGED_PATHS = {"/healthz"}
 
 
+class Counters:
+    def __init__(self):
+        self.in_flight = 0
+        self.requests_total = 0
+
+
+counters = Counters()
+
+
 class RequestLogMiddleware:
     def __init__(self, app, path: str | None):
         self.app = app
@@ -37,6 +46,8 @@ class RequestLogMiddleware:
         ts_mono_ns = time.monotonic_ns()
         t0 = time.perf_counter()
         status: dict[str, int | None] = {"code": None}
+        counters.in_flight += 1
+        counters.requests_total += 1
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
@@ -46,8 +57,10 @@ class RequestLogMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            counters.in_flight -= 1
             current_stats.reset(token)
             if self.out is not None:
+                total_ms = (time.perf_counter() - t0) * 1000
                 route = scope.get("route")
                 record = {
                     "event_type": "backend.request",
@@ -59,9 +72,11 @@ class RequestLogMiddleware:
                     "route": f"{scope['method']} {getattr(route, 'path', scope['path'])}",
                     "path": scope["path"],
                     "http_status": status["code"] or 500,
-                    "gate_decision": "admitted",
-                    "queue_wait_ms": 0.0,
-                    "handler_ms": round((time.perf_counter() - t0) * 1000, 3),
+                    "gate_decision": stats.gate_decision,
+                    "reject_reason": stats.reject_reason,
+                    "queue_wait_ms": round(stats.queue_wait_ms, 3),
+                    "total_ms": round(total_ms, 3),
+                    "handler_ms": round(total_ms - stats.queue_wait_ms, 3),
                     "db_ms": round(stats.db_ms, 3),
                     "query_count": stats.queries,
                     "pool_wait_ms": round(stats.pool_wait_ms, 3),
