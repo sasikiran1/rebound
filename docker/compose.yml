@@ -1,0 +1,77 @@
+# System under test: postgres <- toxiproxy <- fielddesk.
+# FieldDesk reaches PostgreSQL only through the toxiproxy "pg" proxy.
+# Host ports bind to 127.0.0.1 only. Passwords are local-dev defaults for synthetic data.
+name: rebound
+
+x-pg-env: &pg-env
+  PGUSER: fielddesk
+  PGPASSWORD: ${FIELDDESK_DB_PASSWORD:-fielddesk}
+
+services:
+  postgres:
+    # postgres:16 (16.15)
+    image: postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      FIELDDESK_DB_PASSWORD: ${FIELDDESK_DB_PASSWORD:-fielddesk}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD:-oracle}
+    volumes:
+      - ./postgres.conf:/etc/postgresql/postgresql.conf:ro
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Direct access for the oracle (read-only role) and admin tasks; bypasses toxiproxy.
+      - "127.0.0.1:55432:5432"
+    cpuset: "2-3"
+    mem_limit: 2g
+    shm_size: 512m
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  toxiproxy:
+    # ghcr.io/shopify/toxiproxy:2.12.0
+    image: ghcr.io/shopify/toxiproxy@sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes:
+      - ./toxiproxy.json:/config/toxiproxy.json:ro
+    ports:
+      - "127.0.0.1:8474:8474"    # control API
+      - "127.0.0.1:15432:15432"  # pg proxy, for the canary query
+    cpuset: "6"
+    mem_limit: 256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  fielddesk:
+    build:
+      context: ..
+      dockerfile: docker/fielddesk.Dockerfile
+    environment:
+      <<: *pg-env
+      PGHOST: toxiproxy
+      PGPORT: "15432"
+      PGDATABASE: ${FIELDDESK_DB:-fielddesk_trial}
+      POOL_SIZE: ${POOL_SIZE:-8}
+      GATE_ENABLED: ${GATE_ENABLED:-false}
+      REQUEST_LOG: /logs/backend.jsonl
+    volumes:
+      - ../var/fielddesk:/logs
+    ports:
+      - "127.0.0.1:8080:8080"
+    cpuset: "4-5"
+    mem_limit: 2g
+    depends_on:
+      - toxiproxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  pgdata:
