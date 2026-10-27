@@ -97,7 +97,13 @@ class Database:
             yield TimedConnection(conn)
         finally:
             self.in_use -= 1
-            await self.pool.release(conn)
+            # Release runs asyncpg's connection reset, one more round trip the request waits on.
+            t1 = time.perf_counter()
+            try:
+                await self.pool.release(conn)
+            finally:
+                if stats is not None:
+                    stats.db_ms += (time.perf_counter() - t1) * 1000
 
 
 db = Database(size=int(os.environ.get("POOL_SIZE", "8")))
