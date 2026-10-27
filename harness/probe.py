@@ -116,6 +116,33 @@ async def pulse(latency_ms: int = 400, jitter_ms: int = 50, before_s: int = 10, 
     return summary
 
 
+async def proxy_overhead(n: int = 300) -> dict:
+    """Calibration step 6: Toxiproxy overhead with no toxic. Same queries direct (oracle port) vs through the proxy."""
+    import asyncpg
+
+    task = next(t for t in load_tasks() if t["kind"] == "narrow_1day")
+    day_q = ("SELECT count(*) FROM slots s JOIN technician_regions tr ON tr.technician_id = s.technician_id "
+             "AND tr.region_id = (SELECT id FROM regions WHERE code = $1) WHERE s.slot_date = $2")
+    out = {}
+    for label, dsn in (("direct", settings.admin_dsn(settings.TRIAL_DB)), ("proxy", settings.proxied_app_dsn())):
+        conn = await asyncpg.connect(dsn)
+        try:
+            for qname, q, args in (("select_1", "SELECT 1", ()),
+                                   ("day_count", day_q, (task["customer_region"], dt.date.fromisoformat(task["d1"])))):
+                ts = []
+                for _ in range(n):
+                    t0 = time.perf_counter()
+                    await conn.fetchval(q, *args)
+                    ts.append((time.perf_counter() - t0) * 1000)
+                out[f"{label}.{qname}"] = {"p50_ms": round(pct(ts, 0.5), 3), "p95_ms": round(pct(ts, 0.95), 3)}
+        finally:
+            await conn.close()
+    for q in ("select_1", "day_count"):
+        out[f"overhead.{q}_p50_ms"] = round(out[f"proxy.{q}"]["p50_ms"] - out[f"direct.{q}"]["p50_ms"], 3)
+    print(json.dumps(out, indent=2))
+    return out
+
+
 async def endpoints(n: int = 100, seed: int = 1) -> dict:
     """Sequential requests per read endpoint on the healthy system; DB time from the backend log."""
     trial = "endpoints_" + dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S")

@@ -94,6 +94,9 @@ def main() -> None:
     sp = sub.add_parser("endpoints", help="per-endpoint DB time on the healthy system")
     sp.add_argument("--n", type=int, default=100)
     sp.set_defaults(func=cmd_endpoints)
+    sub.add_parser("proxy-overhead", help="Toxiproxy overhead with no toxic (direct vs proxied queries)").set_defaults(
+        func=lambda _a: asyncio.run(probe.proxy_overhead())
+    )
     sp = sub.add_parser("verify-model", help="one minimal tool call plus one previous_response_id continuation")
     sp.add_argument("--model", default="muse-spark-1.3")
     sp.set_defaults(func=cmd_verify_model)

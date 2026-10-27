@@ -52,3 +52,4 @@ ignore = ["ASYNC240"]
 [tool.ruff.lint.per-file-ignores]
 # HTML template lines.
 "analysis/report.py" = ["E501"]
+"analysis/experiment_report.py" = ["E501"]

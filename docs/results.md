@@ -147,3 +147,95 @@ Rough projection (one goal, not a measurement): at ~45 s per goal, 0.4 goals/s g
    returned.
 4. **The backend validates technician skill and coverage** on reschedule (422 `unqualified_slot`). So `incorrect`
    verdicts can only come from date-window violations, extra writes, or writes on infeasible goals.
+
+## Day 2 · Tue Oct 27, 2026 (continued in the same session)
+
+### Full-scale data (seed 1729, scale 1.0)
+
+| Table | Rows |
+|---|---|
+| technicians / technician_skills / technician_regions | 400 / 1,003 / 1,187 |
+| customers | 40,000 |
+| slots | 134,400 (21 days × 16 × 400) |
+| appointments | 105,030 (incl. blocker appointments for infeasible tasks) |
+
+Template checksum `sha256:cc0173457eef08430a5f88786196913195aa9d89c26ecf2033c27dfd0eb1beb3`, build 8.0 s.
+Task sets A (task seed 101) and B (task seed 202): 300 tasks each, 180 one-day / 90 three-day / 30 infeasible,
+no shared customer or appointment. Independent SQL check (`make tasks`): 0 problems in 600 tasks.
+
+**Contradiction with the Day 1 design (recorded, design relaxed):** the Day 1 generator required every task's free
+candidate slots to be disjoint from every other task's. At full scale one set would need about 43k disjoint free
+slots and only about 40k slots are free, so that rule cannot hold for ~250 tasks. Kept: the design's rule (no two
+tasks in a set share a (region, service, date)), infeasible tasks stay infeasible whatever other goals do, and
+blocker appointments never shrink another task's candidates. Consequence: concurrent goals can race for one slot.
+Measured in the healthy scripted calibration trial: 6 HTTP 409s in 228 goals, all resolved by the re-check.
+
+**Availability is public (changed from Day 1).** the design scopes reads to "the goal's customer and region
+set, plus public availability". The adapter now allows any region for `check_day_availability`,
+`search_availability` and `list_technicians`; customer and appointment reads and the write stay scoped to the goal.
+
+### Per-endpoint DB time (healthy, sequential, n = 100 each, full scale, `plan_cache_mode = force_custom_plan`)
+
+| Route / shape | DB ms p50 | DB ms p95 | × day lookup |
+|---|---|---|---|
+| GET /customers/{id}/appointments | 1.82 | 2.43 | 0.7 |
+| GET /appointments/{id} | 1.14 | 1.53 | 0.4 |
+| GET /availability (one day) | 2.65 | 3.33 | 1.0 |
+| GET /technicians | 9.51 | 12.11 | 3.6 |
+| search: goal window, own region | 9.47 | 14.82 | 3.6 |
+| search: goal window, own + adjacent regions | 15.69 | 22.91 | 5.9 |
+| search: goal window, all regions | 23.26 | 36.28 | 8.8 |
+| search: 3-day window, all regions | 29.57 | 46.26 | 11.2 |
+| search: 7 days, all regions | 35.78 | 50.06 | 13.5 |
+
+- The broad search's cost is dominated by query planning (about 10 ms for the 8-relation join). Under the default
+  `plan_cache_mode = auto`, asyncpg's cached statements flipped between custom and generic plans after 5 runs and
+  broad-search cost was bimodal (own region 15 ms, own + adjacent 6 ms). `force_custom_plan` was set in the frozen
+  `postgres.conf` for stable per-request cost; it raised the day lookup from 1.58 to 2.65 ms.
+- **≥ 10× target:** met for multi-day all-region searches (11.2× for 3-day windows). The mixed 1- and 3-day goal
+  window over all regions is 8.8×, just below. Not tuned further. The scripted fallback uses the all-region shape.
+
+### Toxiproxy overhead (no toxic, n = 300 each)
+
+SELECT 1: 0.28 ms direct vs 0.38 ms proxied (p50, +0.10 ms). Day-count query: 0.73 vs 0.60 ms (within noise).
+
+### Capacity step test (background only, 30 s steps, `runs/calibration/steptest_20261027T180416`)
+
+| Offered rps | p50 ms | p95 ms | p99 ms | errors | DB ms/s |
+|---|---|---|---|---|---|
+| 100 | 4.48 | 6.38 | 7.06 | 0% | 294 |
+| 300 | 4.00 | 6.37 | 7.72 | 0% | 853 |
+| 500 | 4.00 | 7.38 | 9.94 | 0% | 1,606 |
+| 600 | 4.19 | 8.46 | 11.80 | 0% | 2,183 |
+| 700 | 4.33 | 9.39 | 13.84 | 0% | 2,766 |
+| 800 | 4.88 | 11.84 | 22.70 | 0% | 3,737 |
+| 900 | 6.61 | 42.77 | 82.09 | 0% | 5,614 |
+| 1000 | 7,314 | 9,620 | 15,838 | 90% | 9,450 |
+
+Knee at 900 rps (p95 above 2 × the 6.38 ms floor). **Capacity: 800 rps, 3,737 DB-ms/s.**
+A first run showed 0.03–0.4% connection errors at low load: the background client reused keep-alive connections
+that uvicorn had closed after its idle timeout. Fixed by resending once on a fresh connection when a reused
+connection returns no bytes (standard HTTP-client behavior; the server never saw the request).
+
+### Runner health fix
+
+With httpx for background traffic, runner CPU p95 was 83–85% during the fault (hundreds of requests in flight;
+httpx's pool bookkeeping grows with open connections), failing the < 70% rule. uvloop alone: 83%. A minimal
+HTTP/1.1 client with an O(1) keep-alive free list, for background traffic only: **CPU p95 6%, loop-lag p99 2.2 ms**
+in the same smoke trial. Agents and the scripted client still use httpx.
+
+### Calibration step 2: scripted client, no fault, background 550 rps (`runs/calibration/tr_0001`)
+
+- Valid. 228 goals scheduled, 228 `correct`. Runner CPU p95 17%, loop-lag p99 2.9 ms, no CPU throttling.
+- Background baseline p95 8.90 ms, success 100%. 11 seconds of the 360 s window were unhealthy with no fault at all
+  (noise against the healthy thresholds); T_rec 1 s.
+- Baseline DB time: **2,047 ms/s total = 54.8% of capacity**; goals 10.3 ms/s; background 2,037 ms/s.
+- Background lowered to **520 rps** for the remaining trials to centre total healthy DB time near 50%.
+
+**Contradiction with the design, step 4 (recorded; cannot be met within the design):** goals are **0.5%**
+of healthy DB time, not ≥ 30%. A goal costs about 25 ms of DB time in total, and agents pace their steps by model
+latency (about 10 s per step), so even 24 concurrent agents send only a few requests per second. Reaching 30% at a
+50%-of-capacity load would need about 800 DB-ms/s from goals, i.e. tens of goals per second, far beyond the 24-goal
+concurrency cap and the model's step latency. Kept: the ordinary load (50% of capacity), because that defines the
+question. Every report states this scale-model limit. It means agent behavior can move recovery only if its
+reactions cost many times more than its healthy traffic.

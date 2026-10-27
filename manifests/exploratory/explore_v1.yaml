@@ -7,7 +7,7 @@ data: {generator_seed: 1729, scale: 1.0, template_db: fielddesk_template,
        checksum: "sha256:cc0173457eef08430a5f88786196913195aa9d89c26ecf2033c27dfd0eb1beb3"}
 tasks: {file: data/tasks/tasks_dev_A.jsonl, sha256: "1cf371381b1f8c8271a173c3a2171a3fe8b476eea34eab13c12688c1479710e0"}
 arrivals: {process: poisson, goals_per_s: 0.4, seed: 7, start_s: 0, stop_s: 550}
-background: {rate_rps: 100, mix: {day_availability: 0.7, get_appointment: 0.3}, timeout_s: 2.0, retries: 0}  # TUNABLE
+background: {rate_rps: 520, mix: {day_availability: 0.7, get_appointment: 0.3}, timeout_s: 2.0, retries: 0}  # TUNABLE
 windows: {warmup: [0, 60], baseline: [60, 180], observe_s: 360, drain_deadline_s: 240}
 fault: {kind: latency, proxy: pg, direction: downstream, latency_ms: 400, jitter_ms: 50, start_s: 180, duration_s: 10}
 gate: {tokens: 8, queue_max: 16, queue_wait_ms: 1500, retry_after_s: 2}  # TUNABLE (grid in section 7a)
@@ -17,4 +17,4 @@ model: {id: muse-spark-1.3, api: responses, continuation: previous_response_id, 
 scripted: {think_time_s: 10.1}  # TUNABLE: Day 1 single-goal median model step; replaced by the measured value
 limits: {model_calls_per_goal: 16, tool_calls_per_goal: 14, goal_deadline_s: 240,
          input_tokens_per_goal: 80000, max_concurrent_goals: 24, trial_budget_usd: 10}
-calibration: {healthy_bg_p95_ms: 1000, notes: "placeholder until the step test"}  # TUNABLE
+calibration: {healthy_bg_p95_ms: 8.9, capacity_rps: 800, capacity_db_ms_per_s: 3737, notes: "step test runs/calibration/steptest_20261027T180416; knee 900 rps"}  # TUNABLE

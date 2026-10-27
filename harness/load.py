@@ -39,24 +39,39 @@ class RawPool:
         self.free: list[tuple[asyncio.StreamReader, asyncio.StreamWriter]] = []
         self.open: set[asyncio.StreamWriter] = set()
 
+    async def _connect(self):
+        conn = await asyncio.open_connection(self.host, self.port)
+        self.open.add(conn[1])
+        return conn
+
     async def get(self, path: str, params: dict | None, headers: dict[str, str]) -> int:
         target = path + ("?" + urlencode(params) if params else "")
+        head = (f"GET {target} HTTP/1.1\r\nHost: {self.host}\r\n"
+                + "".join(f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n").encode()
         conn = None
         while self.free:
             r, w = self.free.pop()
             if not w.is_closing():
                 conn = (r, w)
                 break
+        reused = conn is not None
         if conn is None:
-            conn = await asyncio.open_connection(self.host, self.port)
-            self.open.add(conn[1])
+            conn = await self._connect()
         reader, writer = conn
         ok = False
         try:
-            head = f"GET {target} HTTP/1.1\r\nHost: {self.host}\r\n" + "".join(
-                f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n"
-            writer.write(head.encode())
-            status = int((await reader.readline()).split()[1])
+            writer.write(head)
+            first = await reader.readline()
+            if not first and reused:
+                # The server closed this idle keep-alive connection before reading the request (uvicorn's
+                # keep-alive timeout). Like any HTTP client, send it on a fresh connection; nothing was processed.
+                writer.close()
+                self.open.discard(writer)
+                conn = await self._connect()
+                reader, writer = conn
+                writer.write(head)
+                first = await reader.readline()
+            status = int(first.split()[1])
             length, close = 0, False
             while True:
                 line = await reader.readline()
