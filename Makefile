@@ -1,3 +1,7 @@
+# Local secrets (MODEL_API_KEY=...), gitignored. Exported to every recipe; never echoed.
+-include .env
+export
+
 COMPOSE := docker compose -f docker/compose.yml
 RUNNER_CPUS ?= 8-15
 PY := taskset -c $(RUNNER_CPUS) uv run python
