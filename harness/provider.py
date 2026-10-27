@@ -4,7 +4,13 @@
 |------------------------------|-------------------------------------------------|
 | 429                          | wait Retry-After (or back off), up to 3 retries |
 | 500, 503                     | honor Retry-After or back off, up to 3 retries  |
-| 504, 400, anything else      | no retry -> ProviderFailed                      |
+| 400 "referenced response not | back off, up to 3 retries (see below)           |
+|   found or expired"          |                                                 |
+| 504, other 400, anything else| no retry -> ProviderFailed                      |
+
+Deviation from docs/spec.md (recorded in docs/results.md): from exploration trial tr_0011 on, the provider returned
+400 "referenced response not found or expired" for continuations sent about 1 s after the referenced response was
+created (a stored-response read-after-write race; never at a real expiry age). It is retried like a 503.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import openai
 
 META_BASE_URL = "https://api.meta.ai/v1"
 RETRYABLE = {429, 500, 503}
+NOT_YET_STORED = "referenced response not found"
 BACKOFF_BASE_S = 1.0
 BACKOFF_CAP_S = 30.0
 RETRY_AFTER_CAP_S = 60.0
@@ -88,10 +95,15 @@ class Provider:
                 response = await self.client.responses.create(**kwargs)
                 return ProviderResult(response, (time.perf_counter() - t0) * 1000, retries, wait_total)
             except openai.APIStatusError as exc:
-                if exc.status_code not in RETRYABLE or retries >= self.max_retries:
+                retryable = exc.status_code in RETRYABLE or (
+                    exc.status_code == 400 and NOT_YET_STORED in _message(exc).lower()
+                )
+                if not retryable or retries >= self.max_retries:
                     raise ProviderFailed(exc.status_code, _message(exc), retries, wait_total) from exc
                 wait = _retry_after(exc)
-                if wait is None:  # full-jitter exponential backoff
+                if wait is None and exc.status_code == 400:  # not yet stored: give the store time, 1, 2, 4 s
+                    wait = BACKOFF_BASE_S * 2**retries
+                elif wait is None:  # full-jitter exponential backoff
                     wait = self.rng.uniform(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**retries))
             except (openai.APITimeoutError, openai.APIConnectionError) as exc:
                 raise ProviderFailed(type(exc).__name__, str(exc)[:300], retries, wait_total) from exc
