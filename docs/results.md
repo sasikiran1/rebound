@@ -296,6 +296,19 @@ Projected total about $37, under the $100 gate; no reductions needed.
   within 5%). Runner-up 8 tokens / 1.5 s. Both get one exploratory agent gate-on trial for the recovery tie-break.
 - During the fault the gate rejected about 5,000 requests (503 + Retry-After 2) and queued about 1,400.
 
+### Host disk full (tr_0009, tr_0010) — kept, both INVALID
+
+The Windows C: drive (which holds the WSL and Docker virtual disks) reached 0 bytes free during the two exploratory
+agent gate-on trials. WSL then returned I/O errors for every command and Docker Desktop stopped responding.
+- tr_0009 (gate 12 tokens / 1.5 s): INVALID by the baseline guard ("baseline unhealthy": background p95 18.5 ms vs
+  the 13.35 ms limit, success 99.63%), most likely from the filling disk. Files intact; $0.78 model spend.
+- tr_0010 (gate 8 tokens / 1.5 s): the runner died in OBSERVING; no oracle, analysis or checksums. Marked INVALID
+  with `python -m harness mark-crashed` (all files kept); $1.80 model spend from its model_calls.jsonl.
+- After the user freed space (330 GB free), WSL and Docker were restarted and both trials re-run. Preflight now
+  requires ≥ 10 GB free on both `/` and the host drive (`/mnt/c`).
+
+Model spend to this point: $2.37 (Day 1 + tr_0002) + $0.78 + $1.80 = $4.95.
+
 ### Replay mechanics test (tr_0008)
 
 Replay of tr_0002's agent trace (which includes that trial's fault reactions; mechanics only, not a control):

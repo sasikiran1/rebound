@@ -68,6 +68,31 @@ def cmd_analyze(args) -> None:
               + (f"  CHECKSUM MISMATCH {bad}" if bad else ""))
 
 
+def cmd_mark_crashed(args) -> None:
+    """Clean up a trial whose runner died: keep every file, mark it INVALID with the reason,
+    total its model spend from model_calls.jsonl, and write SHA256SUMS."""
+    from harness.trial import sha256sums
+
+    d = Path(args.trial)
+    meta = json.loads((d / "trial.json").read_text())
+    if meta.get("final_state"):
+        raise SystemExit(f"{d} already ended in {meta['final_state']}")
+    spent = 0.0
+    calls = d / "model_calls.jsonl"
+    for line in calls.read_text().splitlines() if calls.exists() else []:
+        try:
+            spent += json.loads(line).get("cost_usd") or 0.0
+        except ValueError:  # a line cut off by the crash
+            pass
+    meta["invalid_reasons"].append(f"runner crashed: {args.reason}")
+    meta["final_state"] = "INVALID"
+    meta["spent_usd"] = round(spent, 4)
+    meta["states"].append({"state": "INVALID", "reason": f"runner crashed: {args.reason}", "recovered": True})
+    (d / "trial.json").write_text(json.dumps(meta, indent=2, default=str) + "\n")
+    sha256sums(d)
+    print(f"{d}: INVALID ({args.reason}); model spend ${spent:.3f}")
+
+
 def cmd_step_test(args) -> None:
     from harness import calibrate
 
@@ -118,6 +143,10 @@ def main() -> None:
     sp = sub.add_parser("analyze", help="re-run analysis and reports for a trial or experiment directory")
     sp.add_argument("run")
     sp.set_defaults(func=cmd_analyze)
+    sp = sub.add_parser("mark-crashed", help="mark a trial whose runner died as INVALID, keeping all files")
+    sp.add_argument("trial")
+    sp.add_argument("--reason", required=True)
+    sp.set_defaults(func=cmd_mark_crashed)
     sp = sub.add_parser("step-test", help="background-only capacity step test")
     sp.add_argument("--manifest", required=True)
     sp.add_argument("--rates", default="50,100,200,300,400,500,600,800")

@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import shutil
 import statistics
 import time
 from pathlib import Path
@@ -34,6 +35,7 @@ from harness.scripted import run_goal as run_scripted_goal
 from oracle.verdicts import verdict_for
 
 CONDITIONS = ("agent", "scripted", "replay")
+MIN_FREE_GB = 10.0
 
 
 class TrialAbort(Exception):
@@ -167,6 +169,13 @@ class Trial:
         checks["cpusets"] = cpus
         checks["cpu_separation"] = not (runner & (sut.parse_cpuset(cpus["postgres"]) |
                                                   sut.parse_cpuset(cpus["fielddesk"])))
+        # The WSL and Docker virtual disks live on the Windows drive; when it filled up mid-trial (explore-v1
+        # tr_0010) every write failed. Require headroom on both the Linux and the host filesystem.
+        for name, path in (("disk_free_gb_root", "/"), ("disk_free_gb_host", "/mnt/c")):
+            if os.path.exists(path):
+                checks[name] = round(shutil.disk_usage(path).free / 1e9, 1)
+                if checks[name] < MIN_FREE_GB:
+                    checks[f"{name}_ok"] = False
         if self.condition == "agent":
             checks["model_key"] = bool(os.environ.get("MODEL_API_KEY"))
         if self.condition == "replay":
