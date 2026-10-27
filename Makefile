@@ -1,8 +1,12 @@
+# Local secrets (MODEL_API_KEY=...), gitignored. Exported to every recipe; never echoed.
+-include .env
+export
+
 COMPOSE := docker compose -f docker/compose.yml
 RUNNER_CPUS ?= 8-15
 PY := taskset -c $(RUNNER_CPUS) uv run python
 
-.PHONY: sut-up sut-down seed clone reset pulse endpoints goal test lint no-sleep check
+.PHONY: sut-up sut-down seed clone reset pulse endpoints verify-model goal test lint no-sleep check
 
 sut-up:
 	mkdir -p var/fielddesk
@@ -28,8 +32,11 @@ pulse:
 endpoints:
 	$(PY) -m harness endpoints
 
-goal:
-	$(PY) -m harness goal $(if $(TASK),--task $(TASK))
+verify-model:
+	$(PY) -m harness verify-model $(if $(MODEL),--model $(MODEL))
+
+goal: reset
+	$(PY) -m harness goal $(if $(TASK),--task $(TASK)) $(if $(MODEL),--model $(MODEL))
 
 test:
 	uv run pytest -q
