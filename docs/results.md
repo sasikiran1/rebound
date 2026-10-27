@@ -239,3 +239,42 @@ latency (about 10 s per step), so even 24 concurrent agents send only a few requ
 concurrency cap and the model's step latency. Kept: the ordinary load (50% of capacity), because that defines the
 question. Every report states this scale-model limit. It means agent behavior can move recovery only if its
 reactions cost many times more than its healthy traffic.
+
+## Exploration (task set A, `runs/explore-v1`)
+
+### First fault trials, gate off, background 520 rps (10 s, 400 ± 50 ms fault)
+
+| | tr_0001 scripted | tr_0002 agents (Spark 1.3) |
+|---|---|---|
+| Status | valid | valid |
+| Baseline total DB time | 1,826 ms/s (48.9% of capacity) | 1,761 ms/s (47.1%) |
+| Goal share of baseline DB time | 0.56% | 0.74% |
+| Background baseline p95 | 8.38 ms | 7.66 ms |
+| Canary rise | 408 ms | 413 ms |
+| Recovery | fast, T_rec 23 s | fast, T_rec 20 s |
+| Unhealthy seconds in the 360 s window | 32 | 19 |
+| Lost background service D | 9,048 | 7,733 |
+| Goals scheduled / correct | 228 / 221 (7 `failed`) | 228 / 228 |
+| HTTP attempts per goal: baseline / fault / post cohort | 4.26 / 4.07 / 3.81 | 4.10 / 4.45 / 3.90 |
+| DB ms per goal: baseline / fault / post | 24.8 / 33.3 / 25.4 | 30.6 / 37.4 / 30.5 |
+| Reactions (fault cohort) | 1 switch to broad search, 2 other; 35 scripted retries | 11 same-call retries, 2 switches to broad search, 3 other |
+| Transport retries in the agent path | – | 0 |
+| Runner CPU p95 / loop-lag p99 | 17.6% / 2.8 ms | 19.2% / 6.0 ms |
+
+- The 7 scripted failures all arrived during the fault: three 3 s timeouts on the first read (initial attempt + 2
+  retries), then the policy gives up (its only fallback is for day lookups).
+- Agents: 1,151 model calls, 3.53 M input tokens (2.51 M cached, 71%), 167k output (57.8k reasoning).
+  **$2.36 per trial, $0.0104 per goal.** Model latency p50 9.74 s (baseline 9.72 s, observation 9.75 s).
+  3 provider retries, 0 provider failures.
+- **Agents' median healthy step time: 10.25 s** (gaps between consecutive tool operations, baseline cohort). Frozen
+  as the scripted think time (was 10.1 s from the Day 1 single goal).
+- Trial wall time about 10 minutes: every goal ended well before the 790 s drain deadline.
+- Baseline background p95 across the three healthy-load runs so far: 8.90 (550 rps), 8.38, 7.66 ms (520 rps):
+  9% spread at 520 rps, inside the 15% Day 4 check.
+
+### Budget gate
+
+Measured $2.36 per agent trial. Remaining plan: 2–3 exploratory agent gate-on trials, 1 healthy reference, 6
+headline agent trials, 4 unfamiliar-fault trials ≈ 14 × $2.4 ≈ $34, plus $2.36 spent and $0.01 on Day 1.
+Projected total about $37, under the $100 gate; no reductions needed.
+

@@ -14,7 +14,7 @@ gate: {tokens: 8, queue_max: 16, queue_wait_ms: 1500, retry_after_s: 2}  # TUNAB
 model: {id: muse-spark-1.3, api: responses, continuation: previous_response_id, reasoning_effort: low,
         max_output_tokens: 2048, parallel_tool_calls: false, prompt_cache_key: rebound-agent-v1,
         prompt: prompts/agent_v1.md, tools: prompts/tools_v1.json}
-scripted: {think_time_s: 10.1}  # TUNABLE: Day 1 single-goal median model step; replaced by the measured value
+scripted: {think_time_s: 10.25}  # agents' median healthy step time, measured in runs/explore-v1/tr_0002
 limits: {model_calls_per_goal: 16, tool_calls_per_goal: 14, goal_deadline_s: 240,
          input_tokens_per_goal: 80000, max_concurrent_goals: 24, trial_budget_usd: 10}
 calibration: {healthy_bg_p95_ms: 8.9, capacity_rps: 800, capacity_db_ms_per_s: 3737, notes: "step test runs/calibration/steptest_20261027T180416; knee 900 rps"}  # TUNABLE
