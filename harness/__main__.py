@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from harness import dbadmin, probe
+from harness import dbadmin, probe, single
 
 
 def cmd_clone(_args) -> None:
@@ -22,6 +22,14 @@ def cmd_endpoints(args) -> None:
     asyncio.run(probe.endpoints(n=args.n))
 
 
+def cmd_verify_model(args) -> None:
+    asyncio.run(single.verify_model(args.model))
+
+
+def cmd_goal(args) -> None:
+    asyncio.run(single.run_one(args.task, args.model))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="harness")
     sub = p.add_subparsers(dest="command", required=True)
@@ -36,6 +44,13 @@ def main() -> None:
     sp = sub.add_parser("endpoints", help="per-endpoint DB time on the healthy system")
     sp.add_argument("--n", type=int, default=100)
     sp.set_defaults(func=cmd_endpoints)
+    sp = sub.add_parser("verify-model", help="one minimal tool call plus one previous_response_id continuation")
+    sp.add_argument("--model", default="muse-spark-1.3")
+    sp.set_defaults(func=cmd_verify_model)
+    sp = sub.add_parser("goal", help="run one task end to end with a live agent, then the oracle")
+    sp.add_argument("--task", default=None, help="task ID (default: first one-day task)")
+    sp.add_argument("--model", default="muse-spark-1.3")
+    sp.set_defaults(func=cmd_goal)
     args = p.parse_args()
     args.func(args)
 
