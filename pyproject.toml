@@ -1,0 +1,47 @@
+[project]
+name = "rebound"
+version = "0.1.0"
+description = "Agent recovery gate: do tool-using AI agents delay an API's recovery after a brief database slowdown?"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "asyncpg",
+    "httpx",
+    "jinja2",
+    "jsonschema",
+    "matplotlib",
+    "openai",
+    "pandas",
+    "pydantic",
+    "pyyaml",
+]
+
+[dependency-groups]
+# Installed alone in the fielddesk container (`uv sync --only-group backend`).
+backend = [
+    "asyncpg",
+    "fastapi",
+    "uvicorn",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    { include-group = "backend" },
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = [".", "backend"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
