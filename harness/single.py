@@ -23,6 +23,12 @@ def estimate(cfg: AgentConfig) -> tuple[float, float]:
     return typical, cap
 
 
+def estimate_from_manifest(m) -> tuple[float, float]:
+    return estimate(AgentConfig(model=m.model.id, max_output_tokens=m.model.max_output_tokens,
+                                max_model_calls=m.limits.model_calls_per_goal,
+                                max_input_tokens=m.limits.input_tokens_per_goal))
+
+
 async def verify_model(model: str) -> None:
     """One minimal call with one tool, then one continuation via previous_response_id."""
     if model not in PRICES:

@@ -21,7 +21,8 @@ CANCELLED_FRACTION = 0.05
 FULL_TECHNICIANS = 400
 FULL_CUSTOMERS = 40_000
 MAX_WINDOW_SHIFT_DAYS = 7
-MAX_INFEASIBLE_FREE_SLOTS = 8
+MAX_INFEASIBLE_FREE_SLOTS_FULL = 200  # scaled; an infeasible cell may need this many blockers
+MIN_FEASIBLE_FREE_SLOTS = 3
 
 SKILLS = ["hvac", "gas", "electrical", "plumbing", "appliance", "solar"]
 SERVICES = [  # code, name, skill
@@ -53,7 +54,7 @@ class Dataset:
     customers: list[tuple] = field(default_factory=list)
     slots: list[tuple] = field(default_factory=list)
     appointments: list[tuple] = field(default_factory=list)
-    tasks: list[dict] = field(default_factory=list)
+    tasks: dict[str, list[dict]] = field(default_factory=dict)
 
     def tables(self) -> dict[str, tuple[list[str], list[tuple]]]:
         """Table name -> (columns, rows), in foreign-key load order."""
@@ -75,7 +76,8 @@ def day(index: int) -> dt.date:
     return HORIZON_START + dt.timedelta(days=index)
 
 
-def build(seed: int, scale: float, n_tasks: int, task_prefix: str) -> Dataset:
+def build(seed: int, scale: float, task_sets: list[tuple[str, int, int]]) -> Dataset:
+    """task_sets: (prefix, count, task_seed) per set, selected in order from the same database."""
     rng = random.Random(seed)
     ds = Dataset(seed=seed, scale=scale)
 
@@ -174,22 +176,37 @@ def build(seed: int, scale: float, n_tasks: int, task_prefix: str) -> Dataset:
                 out += slots_by_tech_day[(t, d)]
         return out
 
-    ds.tasks = _select_tasks(
-        rng, n_tasks, task_prefix, appt_info, slot_info, customer_region, booked, qualifying,
-        add_appointment, ds,
-    )
+    shared = SharedClaims()
+    infeasible_limit = max(8, round(MAX_INFEASIBLE_FREE_SLOTS_FULL * scale))
+    for prefix, n_tasks, task_seed in task_sets:
+        ds.tasks[prefix] = _select_tasks(
+            random.Random(task_seed), n_tasks, prefix, appt_info, slot_info, customer_region, booked, qualifying,
+            add_appointment, ds, shared, infeasible_limit,
+        )
     return ds
 
 
-def _select_tasks(rng, n_tasks, prefix, appt_info, slot_info, customer_region, booked, qualifying,
-                  add_appointment, ds) -> list[dict]:
-    """Pick goals that cannot interfere with each other.
+@dataclass
+class SharedClaims:
+    """State that spans task sets: sets never share customers, and a later set's blocker appointments never
+    book a slot that an earlier task counts as a free candidate."""
+    used_customers: set[int] = field(default_factory=set)
+    claimed_free: set[int] = field(default_factory=set)
 
-    For every accepted task we track its qualifying slots Q (right service skill, covers the
-    customer's region, inside the window), its free candidates F and its original slot O.
-    A new task is accepted only if its free candidates are disjoint from everyone's F (no slot
-    stealing), its original slot is in nobody's Q, and its Q holds nobody's original slot (freeing an
-    old slot never changes another goal's feasibility), and its (region, service, date) triples are new.
+
+def _select_tasks(rng, n_tasks, prefix, appt_info, slot_info, customer_region, booked, qualifying,
+                  add_appointment, ds, shared: SharedClaims, infeasible_limit: int) -> list[dict]:
+    """Pick goals for one task set.
+
+    Rules (plus protections for the oracle's expected outcomes):
+    - (region, service, date) triples never overlap inside a set.
+    - An infeasible task's qualifying slots Q hold no other task's original slot, and no task's original slot
+      lies in an infeasible task's Q, so no goal can make an infeasible task feasible by freeing its slot.
+    - Infeasible tasks are picked first and their blockers book every free qualifying slot; blockers never book
+      a slot another task counts as a free candidate, so recorded candidate counts stay exact.
+    - Feasible tasks need at least MIN_FEASIBLE_FREE_SLOTS free candidates.
+    Free candidates of two feasible tasks may overlap (full scale has too few free slots for disjoint sets), so
+    two concurrent goals can occasionally race for one slot and see a 409.
     """
     counts = {k: round(n_tasks * share) for k, share in TASK_MIX.items()}
     counts["narrow_1day"] = n_tasks - counts["flexible_3day"] - counts["infeasible"]
@@ -206,11 +223,10 @@ def _select_tasks(rng, n_tasks, prefix, appt_info, slot_info, customer_region, b
     candidates = sorted(appt_info)
     rng.shuffle(candidates)
 
-    claimed_free: set[int] = set()
-    claimed_qual: set[int] = set()
+    infeasible_qual: set[int] = set()
     original_slots: set[int] = set()
     triples: set[tuple[int, int, int]] = set()
-    used_customers: set[int] = set()
+    used_customers = shared.used_customers
     service_code = {row[0]: row[1] for row in ds.service_types}
     service_name = {row[0]: row[2] for row in ds.service_types}
     tasks: list[dict] = []
@@ -226,7 +242,7 @@ def _select_tasks(rng, n_tasks, prefix, appt_info, slot_info, customer_region, b
             region = customer_region[customer]
             if customer in used_customers or per_key[(customer, service, d0)] != 1:
                 continue
-            if slot in claimed_qual:
+            if slot in infeasible_qual:
                 continue
             starts = [
                 k for k in range(DAYS - length + 1)
@@ -238,13 +254,9 @@ def _select_tasks(rng, n_tasks, prefix, appt_info, slot_info, customer_region, b
             if new_triples & triples:
                 continue
             qual = qualifying(region, service, window)
-            if set(qual) & original_slots:
-                continue
             free = [s for s in qual if s not in booked]
-            if set(free) & claimed_free:
-                continue
             if kind == "infeasible":
-                if len(free) > MAX_INFEASIBLE_FREE_SLOTS:
+                if set(qual) & original_slots or set(free) & shared.claimed_free or len(free) > infeasible_limit:
                     continue
                 for s in free:  # book every remaining qualifying slot for other customers
                     blocker = add_appointment(s, "scheduled", region=region, service=service,
@@ -253,11 +265,11 @@ def _select_tasks(rng, n_tasks, prefix, appt_info, slot_info, customer_region, b
                     b_key = (b_customer, b_service, slot_info[b_slot][1])
                     per_key[b_key] = per_key.get(b_key, 0) + 1
                 free = []
-            elif not free:
+                infeasible_qual |= set(qual)
+            elif len(free) < MIN_FEASIBLE_FREE_SLOTS:
                 continue
 
-            claimed_free |= set(free)
-            claimed_qual |= set(qual)
+            shared.claimed_free |= set(free)
             original_slots.add(slot)
             triples |= new_triples
             used_customers.add(customer)

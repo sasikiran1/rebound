@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+from pathlib import Path
 
 from harness import dbadmin, probe, single
 
@@ -30,6 +32,54 @@ def cmd_goal(args) -> None:
     asyncio.run(single.run_one(args.task, args.model))
 
 
+def cmd_trial(args) -> None:
+    from harness import trial
+    from harness.manifest import load
+
+    m = load(args.manifest)
+    if args.condition == "agent":
+        n = round(m.arrivals.goals_per_s * (m.arrivals.stop_s - m.arrivals.start_s))
+        typical, cap = single.estimate_from_manifest(m)
+        print(f"model spend estimate for ~{n} goals: ~${n * typical:.2f} typical "
+              f"(per-trial cap ${m.limits.trial_budget_usd:.2f} cancels the trial)")
+    out = trial.run(args.manifest, args.condition, args.gate, experiment=args.experiment, repeat=args.repeat,
+                    block=args.block, label=args.label,
+                    fault_enabled=False if args.no_fault else None, fault_duration_s=args.fault_duration_s)
+    verdict = out / "verdict.json"
+    if verdict.exists():
+        v = json.loads(verdict.read_text())
+        print(json.dumps({k: v[k] for k in ("trial_id", "status", "recovery", "goals", "background")}, indent=2,
+                         default=str))
+        print(f"model cost ${v['model'].get('cost_usd', 0):.3f}" if v.get("model") else "")
+    print(f"trial bundle: {out}")
+
+
+def cmd_analyze(args) -> None:
+    from analysis.metrics import analyze
+    from analysis.report import trial_report
+    from harness.trial import verify_sums
+
+    for d in sorted(Path(args.run).glob("tr_*")) if not (Path(args.run) / "trial.json").exists() else [Path(args.run)]:
+        bad = verify_sums(d) if (d / "SHA256SUMS").exists() else ["SHA256SUMS missing"]
+        res = analyze(d)
+        trial_report(d, res)
+        print(f"{d}: {res['status']} recovery={res['recovery']['verdict']} T_rec={res['recovery']['t_rec_s']} "
+              f"S={res['goals']['success_S']} D={res['background']['lost_service_D']:.0f}"
+              + (f"  CHECKSUM MISMATCH {bad}" if bad else ""))
+
+
+def cmd_step_test(args) -> None:
+    from harness import calibrate
+
+    calibrate.run(args.manifest, [float(x) for x in args.rates.split(",")], args.step_s)
+
+
+def cmd_verify_tasks(args) -> None:
+    from harness import taskcheck
+
+    asyncio.run(taskcheck.verify(args.tasks))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="harness")
     sub = p.add_subparsers(dest="command", required=True)
@@ -51,6 +101,28 @@ def main() -> None:
     sp.add_argument("--task", default=None, help="task ID (default: first one-day task)")
     sp.add_argument("--model", default="muse-spark-1.3")
     sp.set_defaults(func=cmd_goal)
+    sp = sub.add_parser("trial", help="run one trial end to end")
+    sp.add_argument("--manifest", required=True)
+    sp.add_argument("--condition", required=True, choices=["agent", "scripted", "replay"])
+    sp.add_argument("--gate", required=True, choices=["on", "off"])
+    sp.add_argument("--experiment", default=None)
+    sp.add_argument("--repeat", type=int, default=None)
+    sp.add_argument("--block", type=int, default=None)
+    sp.add_argument("--label", default=None)
+    sp.add_argument("--no-fault", action="store_true", help="healthy reference trial (no toxic)")
+    sp.add_argument("--fault-duration-s", type=float, default=None, help="override, e.g. the unfamiliar 20 s fault")
+    sp.set_defaults(func=cmd_trial)
+    sp = sub.add_parser("analyze", help="re-run analysis and reports for a trial or experiment directory")
+    sp.add_argument("run")
+    sp.set_defaults(func=cmd_analyze)
+    sp = sub.add_parser("step-test", help="background-only capacity step test")
+    sp.add_argument("--manifest", required=True)
+    sp.add_argument("--rates", default="50,100,200,300,400,500,600,800")
+    sp.add_argument("--step-s", type=float, default=40)
+    sp.set_defaults(func=cmd_step_test)
+    sp = sub.add_parser("verify-tasks", help="independent SQL check of a task file against the trial DB")
+    sp.add_argument("tasks")
+    sp.set_defaults(func=cmd_verify_tasks)
     args = p.parse_args()
     args.func(args)
 

@@ -12,12 +12,38 @@ from pathlib import Path
 
 import httpx
 
+from data.generator.generate import DAYS, GRID_H, GRID_W, SERVICES, day
 from harness import backendlog, settings
 from harness.fault import Canary, Toxiproxy
 
 
 def load_tasks(path: str = "data/tasks/tasks_dev_A.jsonl") -> list[dict]:
     return [json.loads(line) for line in Path(path).read_text().splitlines()]
+
+
+SKILL_OF = {code: skill for code, _, skill in SERVICES}
+
+
+def near(region: str) -> list[str]:
+    """The region followed by its grid neighbours (distance 1)."""
+    r = int(region[1:]) - 1
+    x, y = r % GRID_W, r // GRID_W
+    out = [region]
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        if 0 <= x + dx < GRID_W and 0 <= y + dy < GRID_H:
+            out.append(f"R{(y + dy) * GRID_W + x + dx + 1:02d}")
+    return out
+
+
+def all_regions(task: dict) -> list[str]:
+    """Every region, the customer's first (so the search ranks by distance from it)."""
+    own = task["customer_region"]
+    return [own] + [f"R{r:02d}" for r in range(1, GRID_W * GRID_H + 1) if f"R{r:02d}" != own]
+
+
+def shift(date: str, days: int) -> str:
+    d = min(dt.date.fromisoformat(date) + dt.timedelta(days=days), day(DAYS - 1))
+    return d.isoformat()
 
 
 def pct(values: list[float], q: float) -> float:
@@ -101,6 +127,31 @@ async def endpoints(n: int = 100, seed: int = 1) -> dict:
         "GET /availability": lambda t: (
             "/availability", {"region": t["customer_region"], "date": t["d1"], "service": t["service"]}
         ),
+        "GET /technicians": lambda t: (
+            "/technicians", {"region": t["customer_region"], "skill": SKILL_OF[t["service"]]}
+        ),
+        "search: window, own region": lambda t: (
+            "/availability/search",
+            {"service": t["service"], "from": t["d1"], "to": t["d2"], "regions": t["customer_region"]},
+        ),
+        "search: window, own + adjacent regions": lambda t: (
+            "/availability/search",
+            {"service": t["service"], "from": t["d1"], "to": t["d2"], "regions": ",".join(near(t["customer_region"]))},
+        ),
+        "search: window, all regions": lambda t: (
+            "/availability/search",
+            {"service": t["service"], "from": t["d1"], "to": t["d2"], "regions": ",".join(all_regions(t))},
+        ),
+        "search: window, all regions (3-day goals)": lambda t: (
+            "/availability/search",
+            {"service": t["service"], "from": t["d1"], "to": shift(t["d1"], 2), "regions": ",".join(all_regions(t))},
+        ),
+        "search: 7 days, all regions": lambda t: (
+            "/availability/search",
+            {"service": t["service"], "from": t["d1"], "to": shift(t["d1"], 6),
+             "regions": ",".join([t["customer_region"]] + [f"R{r:02d}" for r in range(1, 21)
+                                                           if f"R{r:02d}" != t["customer_region"]])},
+        ),
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
         for route, plan in plans.items():
@@ -111,7 +162,7 @@ async def endpoints(n: int = 100, seed: int = 1) -> dict:
     recs = backendlog.read(trial)
     out = {}
     for route in plans:
-        sel = [r for r in recs if r["route"] == route and r["http_status"] == 200]
+        sel = [r for r in recs if r["logical_op_id"].split("#")[0] == route and r["http_status"] == 200]
         db = [r["db_ms"] for r in sel]
         out[route] = {
             "n": len(sel),

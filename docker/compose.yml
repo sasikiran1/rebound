@@ -58,7 +58,12 @@ services:
       PGDATABASE: ${FIELDDESK_DB:-fielddesk_trial}
       POOL_SIZE: ${POOL_SIZE:-8}
       GATE_ENABLED: ${GATE_ENABLED:-false}
+      GATE_TOKENS: ${GATE_TOKENS:-8}
+      GATE_QUEUE_MAX: ${GATE_QUEUE_MAX:-16}
+      GATE_QUEUE_WAIT_MS: ${GATE_QUEUE_WAIT_MS:-1500}
+      GATE_RETRY_AFTER_S: ${GATE_RETRY_AFTER_S:-2}
       REQUEST_LOG: /logs/backend.jsonl
+      SAMPLE_LOG: /logs/samples.jsonl
     volumes:
       - ../var/fielddesk:/logs
     ports:

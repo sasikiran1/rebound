@@ -21,6 +21,9 @@ class RequestStats:
     db_ms: float = 0.0
     queries: int = 0
     pool_wait_ms: float = 0.0
+    gate_decision: str = "admitted"  # admitted | queued | rejected (always admitted with the gate off)
+    queue_wait_ms: float = 0.0
+    reject_reason: str | None = None
 
 
 current_stats: ContextVar[RequestStats | None] = ContextVar("current_stats", default=None)
