@@ -97,10 +97,45 @@ A scripted stand-in for the model drove the real adapter → FieldDesk → oracl
 
 Tests: 49 passing (oracle verdict classes, adapter validation and scope, provider retry table, agent loop limits).
 
-### Live agent goal: NOT RUN
+### Model verification (`make verify-model`, muse-spark-1.3)
 
-`MODEL_API_KEY` is not set in Windows or WSL, so the verification call and the live goal are pending. No model
-spend so far ($0.00).
+| Call | Latency ms | Input | Cached | Output (reasoning) | Est. cost |
+|---|---|---|---|---|---|
+| 1: minimal call, one tool | 2,931 | 574 | 0 | 110 (40) | $0.00119 |
+| 2: `previous_response_id` + `function_call_output` | 14,164 | 696 | 497 | 111 (76) | $0.00080 |
+
+- Key, model ID and Responses API work. Output items: `reasoning`, `message`, `function_call`.
+- Continuation works with `store=True` set explicitly on each call.
+- Usage fields: `input_tokens`, `input_tokens_details.cached_tokens`, `output_tokens`,
+  `output_tokens_details.reasoning_tokens`. `cache_write_tokens` is present but null.
+- **Contradicts the design:** with `previous_response_id`, `input_tokens` covers the **whole
+  conversation** (696 = 574 from turn 1 plus the new turn), not just the new turn. Summing per-call usage
+  therefore already counts the full billed input, and the 80,000-token per-goal cap counts the same way. Still to
+  check against the billing dashboard.
+
+### Live agent goal (`make goal TASK=A0001`, muse-spark-1.3)
+
+Task A0001 (narrow_1day, appliance_install, customer 1441): fresh clone, FieldDesk restarted, then one live goal.
+
+| Step | Model ms | Input (cached) | Output (reasoning) | Tool | Tool result | Tool ms |
+|---|---|---|---|---|---|---|
+| mc_0001_01 | 2,739 | 1,164 (0) | 91 (10) | get_customer_appointments | ok | 11.2 |
+| mc_0001_02 | 10,087 | 1,580 (1,137) | 169 (50) | check_day_availability | ok | 11.3 |
+| mc_0001_03 | 13,370 | 2,186 (1,521) | 159 (62) | reschedule_appointment | ok | 17.2 |
+| mc_0001_04 | 8,225 | 2,368 (2,161) | 79 (6) | get_appointment | ok | 7.6 |
+| mc_0001_05 | 10,528 | 2,533 (2,289) | 84 (23) | (final text) | | |
+
+- Ended `rescheduled` after 45.0 s: 5 model calls, 4 tool calls, 0 errors, 0 transport retries.
+- Tokens: input 9,831 (cached 7,108, 72%), output 582 (reasoning 151). **Estimated cost $0.00694.**
+- **Oracle: `correct`**; completion time from `appointment_changes.applied_at`.
+- Model step latency: median 10.1 s (range 2.7–13.4 s). Tool latency 7.6–17.2 ms. Model time is > 99% of goal time.
+- Events: 4 client `http.attempt` events, all 4 joined to backend rows on (`trial_id`, `attempt_id`).
+  `attempt_id` alone is not unique across trials because the backend log carries over between runs. Joins must
+  include `trial_id` (Day 2: copy each trial's backend rows into its run folder).
+- Day 1 model spend: 7 calls, ≈ $0.009 estimated.
+
+Rough projection (one goal, not a measurement): at ~45 s per goal, 0.4 goals/s gives ~18 concurrent agents
+(target 8–16, cap 24), and ~220 goals × $0.007 ≈ $1.5 per agent trial.
 
 ### Design interpretations (please confirm)
 
