@@ -278,3 +278,27 @@ Measured $2.36 per agent trial. Remaining plan: 2–3 exploratory agent gate-on 
 headline agent trials, 4 unfamiliar-fault trials ≈ 14 × $2.4 ≈ $34, plus $2.36 spent and $0.01 on Day 1.
 Projected total about $37, under the $100 gate; no reductions needed.
 
+### Gate grid, scripted client, 10 s fault, think time 10.25 s
+
+| Trial | Gate | Baseline bg p95 | Δ vs gate-off mean 7.94 ms | Baseline rejections | T_rec | D | correct / rejected / failed |
+|---|---|---|---|---|---|---|---|
+| tr_0001 | off (think 10.1 s) | 8.38 ms | – | 0 | 23 s | 9,048 | 221 / 0 / 7 |
+| tr_0003 | off | 7.50 ms | – | 0 | 20 s | 7,846 | 223 / 0 / 5 |
+| tr_0004 | 8 tokens, 1.0 s | 8.57 ms | +7.9% | 0 | 10 s | 5,025 | 223 / 3 / 2 |
+| tr_0005 | 8 tokens, 1.5 s | 8.40 ms | +5.8% | 0 | 10 s | 5,134 | 223 / 3 / 2 |
+| tr_0006 | 12 tokens, 1.0 s | 10.16 ms | +28% | 0.76% | 10 s | 5,018 | 223 / 3 / 2 |
+| tr_0007 | 12 tokens, 1.5 s | 8.09 ms | +1.9% | 0 | 10 s | 5,056 | 223 / 3 / 2 |
+
+- Every grid point halved T_rec (20 → 10 s) and cut D by about a third with the same correct count. Baseline goal
+  success was 100% in all six trials, so the overhead rule is decided by background p95.
+- Gate-off baselines alone differ by 11% (7.50 vs 8.38 ms), so differences under about 10% are within run-to-run
+  noise. The rule (smallest healthy-period overhead) picks **12 tokens, 1.5 s queue wait** (+1.9%, the only point
+  within 5%). Runner-up 8 tokens / 1.5 s. Both get one exploratory agent gate-on trial for the recovery tie-break.
+- During the fault the gate rejected about 5,000 requests (503 + Retry-After 2) and queued about 1,400.
+
+### Replay mechanics test (tr_0008)
+
+Replay of tr_0002's agent trace (which includes that trial's fault reactions; mechanics only, not a control):
+valid, 228/228 correct, 940 requests replayed open-loop, attempts per goal in the fault cohort 4.45 (identical to
+the source trace), T_rec 21 s, D 8,428.
+

@@ -38,7 +38,9 @@ def load_trace(client_jsonl: str | Path) -> dict[int, list[dict]]:
     out = {}
     for g, s in steps.items():
         s.sort(key=lambda x: x["t_ns"])
-        out[int(g.split("_")[1])] = [{**x, "offset_s": (x.pop("t_ns") - starts[g]) / 1e9} for x in s]
+        out[int(g.split("_")[1])] = [
+            {**{k: v for k, v in x.items() if k != "t_ns"}, "offset_s": (x["t_ns"] - starts[g]) / 1e9} for x in s
+        ]
     for g in starts:  # goals that made no request at all still exist in the trace
         out.setdefault(int(g.split("_")[1]), [])
     return out
