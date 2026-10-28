@@ -1,0 +1,23 @@
+# frozen evaluation run list (scripts/eval_specs.py)
+agent off 0 reference --no-fault
+# block 1 (shuffle seed 20261102)
+scripted off 1 scripted-gate-off
+scripted on 1 scripted-gate-on
+agent on 1 agent-gate-on
+agent off 1 agent-gate-off
+replay off 1 replay-gate-off
+# block 2 (shuffle seed 20261103)
+scripted on 2 scripted-gate-on
+scripted off 2 scripted-gate-off
+replay off 2 replay-gate-off
+agent on 2 agent-gate-on
+agent off 2 agent-gate-off
+# block 3 (shuffle seed 20261104)
+agent off 3 agent-gate-off
+scripted on 3 scripted-gate-on
+replay off 3 replay-gate-off
+scripted off 3 scripted-gate-off
+agent on 3 agent-gate-on
+# unfamiliar fault, 20 s
+agent off 4 unfamiliar-agent-gate-off --fault-duration-s 20
+agent on 4 unfamiliar-agent-gate-on --fault-duration-s 20
