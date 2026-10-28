@@ -1,0 +1,18 @@
+{"declared": "2026-10-28, before any run of this plan",
+ "purpose": "Reproduce earlier constraint findings with the repository agent loop; isolate the context-window limit (orig 8192 vs ctx16k 16384, tool-result cap 4096 unchanged); check sampling robustness (temperature 0.7, three seeds); confirm on held-out task set B.",
+ "fixed": {"tool_result_cap_bytes": 4096, "prompt": "prompts/agent_v1.md", "tools": "prompts/tools_v1.json", "max_model_calls": 16, "max_tool_calls": 14, "goal_deadline_s": 240, "gate": "off", "fault": "none", "background": "none", "fresh_db_per_case": true},
+ "runs": [
+  {"models": ["qwen3.5-9b-16k:latest", "gemma4-12b-16k:latest", "qwen2.5-14b-8k:latest", "qwen3-14b-16k:latest"],
+   "settings": [{"name": "orig", "options": {"temperature": 0, "seed": 41, "num_ctx": 8192}, "num_predict": 1536, "think": false},
+                {"name": "ctx16k", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": false}],
+   "cases": ["LATE_A", "TECH_A", "FULL_A", "LATE_B", "TECH_B", "FULL_B"]},
+  {"models": ["qwen3.5-9b-16k:latest", "gemma4-12b-16k:latest"],
+   "settings": [{"name": "orig", "options": {"temperature": 0, "seed": 41, "num_ctx": 8192}, "num_predict": 1536, "think": false},
+                {"name": "ctx16k", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": false}],
+   "cases": ["RACE_A", "RACE_B"]},
+  {"models": ["qwen3.5-9b-16k:latest", "gemma4-12b-16k:latest"],
+   "settings": [{"name": "t07_s1", "options": {"temperature": 0.7, "seed": 1, "num_ctx": 16384}, "num_predict": 1536, "think": false},
+                {"name": "t07_s2", "options": {"temperature": 0.7, "seed": 2, "num_ctx": 16384}, "num_predict": 1536, "think": false},
+                {"name": "t07_s3", "options": {"temperature": 0.7, "seed": 3, "num_ctx": 16384}, "num_predict": 1536, "think": false}],
+   "cases": ["LATE_A", "LATE_B"]}
+ ]}

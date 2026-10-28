@@ -34,7 +34,7 @@ from harness.scripted import ScriptedConfig
 from harness.scripted import run_goal as run_scripted_goal
 from oracle.verdicts import verdict_for
 
-CONDITIONS = ("agent", "scripted", "replay")
+CONDITIONS = ("agent", "scripted", "replay", "background")  # background: background traffic only, no goals
 MIN_FREE_GB = 10.0
 
 
@@ -176,7 +176,9 @@ class Trial:
                 checks[name] = round(shutil.disk_usage(path).free / 1e9, 1)
                 if checks[name] < MIN_FREE_GB:
                     checks[f"{name}_ok"] = False
-        if self.condition == "agent":
+        if self.condition == "agent" and self.m.model.provider == "ollama":
+            checks["ollama_model"] = await self.ollama_identity()
+        elif self.condition == "agent":
             checks["model_key"] = bool(os.environ.get("MODEL_API_KEY"))
         if self.condition == "replay":
             checks["replay_trace"] = bool(self.m.replay_trace and (ROOT / self.m.replay_trace).exists())
@@ -184,6 +186,34 @@ class Trial:
         failed = [k for k, v in checks.items() if v is False]
         if failed:
             raise TrialAbort("INVALID", f"preflight failed: {failed}")
+
+    async def ollama_identity(self) -> bool:
+        """Record the local model's digest and parameters, then load it with one untimed warm-up call (before t0),
+        so cold loading does not land in the baseline window."""
+        from harness.ollama import Relay
+        relay = Relay()
+        try:
+            r = await relay.post("/api/tags", None)  # payload None: GET
+            tags = (r.get("body") or {}).get("models") or []
+            info = next((t for t in tags if t.get("name") == self.m.model.id), None)
+            warm = await relay.post("/api/chat", {"model": self.m.model.id, "keep_alive": "60m", "stream": False,
+                                                  "messages": [{"role": "user", "content": "ok"}],
+                                                  "options": {**self.m.model.ollama_options, "num_predict": 1}})
+            self.meta["ollama"] = {"model": self.m.model.id, "digest": info and info.get("digest"),
+                                   "details": info and info.get("details"), "warmup_ok": warm.get("ok"),
+                                   "warmup_s": round(warm.get("elapsed_s") or 0, 2)}
+            return bool(warm.get("ok"))
+        finally:
+            await relay.close()
+
+    async def pg_cpu_loop(self) -> None:
+        """1 Hz postgres cgroup CPU usage, so DB work (CPU) is reported separately from DB round-trip time."""
+        while True:
+            st = await asyncio.to_thread(sut.cpu_stat, "postgres")
+            if st:
+                self.events.emit("pg.cpu", stream="pg_cpu", t=round(self.elapsed(), 3), usage_usec=st.get("usage_usec"),
+                                 nr_throttled=st.get("nr_throttled"))
+            await asyncio.sleep(1.0)
 
     def phase_of(self, t: float) -> tuple[str, str]:
         f = self.m.fault
@@ -276,7 +306,7 @@ class Trial:
 
     async def run_one_goal(self, n: int, task: dict, sem: asyncio.Semaphore, clients: dict) -> None:
         ids = goal_ids(n)
-        kind = {"agent": "agent", "scripted": "scripted", "replay": "replay"}[self.condition]
+        kind = {"agent": "agent", "scripted": "scripted", "replay": "replay"}[self.condition]  # never "background"
         actor = {**ids, "actor_id": f"{kind}_{n:04d}", "actor_kind": kind}
         self.events.emit("goal.scheduled", **actor, task_id=task["task_id"], kind=task["kind"],
                          expected=task["expected"], t_sched=round(self.elapsed(), 3))
@@ -306,6 +336,9 @@ class Trial:
 
     async def arrivals(self, clients: dict, goal_tasks: list[asyncio.Task]) -> None:
         a = self.m.arrivals
+        if self.condition == "background":
+            self.meta["arrivals_planned"] = 0
+            return
         times = poisson_arrivals(a.goals_per_s, a.seed, a.start_s, a.stop_s)
         if len(times) > len(self.tasks):
             raise TrialAbort("INVALID", f"{len(times)} arrivals but only {len(self.tasks)} tasks")
@@ -329,7 +362,13 @@ class Trial:
             clients["tools"] = load_tools(self.m.model.tools)
             if self.condition == "agent":
                 from harness.provider import Provider, make_client
-                clients["provider"] = Provider(make_client())
+                if self.m.model.provider == "ollama":
+                    from harness.ollama import OllamaClient
+                    self.ollama = OllamaClient(self.m.model.ollama_options, think=self.m.model.think,
+                                               raw_dir=self.dir / "ollama_raw")
+                    clients["provider"] = Provider(self.ollama)
+                else:
+                    clients["provider"] = Provider(make_client())
                 lim = self.m.limits
                 clients["agent_cfg"] = AgentConfig(
                     model=self.m.model.id, reasoning_effort=self.m.model.reasoning_effort,
@@ -343,7 +382,7 @@ class Trial:
                     think_time_s=s.think_time_s, max_retries=s.max_retries, backoff_base_s=s.backoff_base_s,
                     backoff_cap_s=s.backoff_cap_s, retry_after_cap_s=s.retry_after_cap_s,
                     request_budget=s.request_budget, goal_deadline_s=self.m.limits.goal_deadline_s, seed=s.seed)
-            else:
+            elif self.condition == "replay":
                 clients["trace"] = load_trace(ROOT / self.m.replay_trace)
             self.canary: list[tuple[float, float]] = []
 
@@ -359,7 +398,7 @@ class Trial:
             health = RunnerHealth(self.events)
             health_task = asyncio.create_task(health.run())
             side = [bg_task, health_task, asyncio.create_task(self.context_updater()),
-                    asyncio.create_task(self.canary_loop())]
+                    asyncio.create_task(self.canary_loop()), asyncio.create_task(self.pg_cpu_loop())]
             arrivals = asyncio.create_task(self.arrivals(clients, goal_tasks))
             fault = asyncio.create_task(self.fault_sequence())
             side += [arrivals, fault]
@@ -402,6 +441,8 @@ class Trial:
             await asyncio.gather(*side, return_exceptions=True)
             if background is not None:
                 await background.close()
+            if getattr(self, "ollama", None) is not None:
+                await self.ollama.close()
             if http is not None:
                 await http.aclose()
             async with httpx.AsyncClient(timeout=10) as c:

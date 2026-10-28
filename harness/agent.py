@@ -147,6 +147,8 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
                 status="ok", provider_retries=res.retries, provider_wait_s=res.wait_s, response_id=resp.id,
                 previous_response_id=None if full_history else previous_id, continuation=cfg.continuation,
                 input_items=len(call_input), response_status=getattr(resp, "status", None),
+                done_reason=getattr(resp, "done_reason", None), context_used=getattr(resp, "context_used", None),
+                num_ctx=getattr(resp, "num_ctx", None), server_s=getattr(resp, "server_s", None),
             )
             previous_id = resp.id
             calls = [item for item in resp.output if item.type == "function_call"]

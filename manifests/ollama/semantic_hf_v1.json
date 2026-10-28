@@ -1,0 +1,9 @@
+{"declared": "2026-10-28, before any run of this plan; user chose these two Hugging Face models to take the qwen2.5 / qwen3 slots in new tests",
+ "purpose": "Same constraint cases and settings as semantic_v1 runs[0], for two non-Qwen families pulled from Hugging Face (GGUF Q4_K_M via ollama hf.co).",
+ "fixed": {"tool_result_cap_bytes": 4096, "prompt": "prompts/agent_v1.md", "tools": "prompts/tools_v1.json", "max_model_calls": 16, "max_tool_calls": 14, "goal_deadline_s": 240, "gate": "off", "fault": "none", "background": "none", "fresh_db_per_case": true},
+ "runs": [
+  {"models": ["hf.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M", "hf.co/bartowski/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M"],
+   "settings": [{"name": "orig", "options": {"temperature": 0, "seed": 41, "num_ctx": 8192}, "num_predict": 1536, "think": null},
+                {"name": "ctx16k", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": null}],
+   "cases": ["LATE_A", "TECH_A", "FULL_A", "LATE_B", "TECH_B", "FULL_B"]}
+ ]}

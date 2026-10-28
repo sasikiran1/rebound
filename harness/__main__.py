@@ -131,7 +131,7 @@ def main() -> None:
     sp.set_defaults(func=cmd_goal)
     sp = sub.add_parser("trial", help="run one trial end to end")
     sp.add_argument("--manifest", required=True)
-    sp.add_argument("--condition", required=True, choices=["agent", "scripted", "replay"])
+    sp.add_argument("--condition", required=True, choices=["agent", "scripted", "replay", "background"])
     sp.add_argument("--gate", required=True, choices=["on", "off"])
     sp.add_argument("--experiment", default=None)
     sp.add_argument("--repeat", type=int, default=None)

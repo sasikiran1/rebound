@@ -144,6 +144,9 @@ def build_request(name: str, args: dict, scope: GoalScope) -> tuple[str, str, st
     elif name == "search_availability":
         params = {"service": args["service"], "from": args["date_from"], "to": args["date_to"],
                   "regions": ",".join(args["regions"])}
+    if name in ("check_day_availability", "search_availability"):
+        # Tool set v2 only (prompts/tools_v2_*.json); v1 schemas reject these arguments before this point.
+        params.update({k: args[k] for k in ("start_after", "start_before", "offset") if k in args})
     elif name == "list_technicians":
         params = {"region": args["region"], "skill": args["skill"]}
     elif name == "reschedule_appointment":

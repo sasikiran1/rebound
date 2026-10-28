@@ -39,6 +39,8 @@ PRICES = {
 
 
 def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
+    if model not in PRICES:  # local Ollama models (harness/ollama.py): no billed spend
+        return 0.0
     p_in, p_cached, p_out = PRICES[model]
     return (p_in * (input_tokens - cached_tokens) + p_cached * cached_tokens + p_out * output_tokens) / 1e6
 

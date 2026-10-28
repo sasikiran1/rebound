@@ -97,6 +97,11 @@ class Model(Strict):
     prompt_cache_key: str = "rebound-agent-v1"
     prompt: str = "prompts/agent_v1.md"
     tools: str = "prompts/tools_v1.json"
+    # meta: Meta Model API. ollama: local model through harness/ollama.py (no billed spend);
+    # ollama_options go to /api/chat `options` (temperature, seed, num_ctx); num_predict = max_output_tokens.
+    provider: str = "meta"
+    ollama_options: dict = {}
+    think: bool | None = False
 
 
 class Scripted(Strict):
