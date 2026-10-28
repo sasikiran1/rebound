@@ -140,6 +140,7 @@ def acceptance(valid: pd.DataFrame) -> dict:
         faster = [p["faster_or_both_fast"] for p in pairs if p["faster_or_both_fast"] is not None]
         c2 = {"pairs_faster_or_both_fast": sum(faster), "pairs": len(faster),
               "pass": sum(faster) >= 2 if len(faster) >= 3 else None,
+              "status": "judged" if len(faster) >= 3 else "insufficient_evidence (fewer than 3 pairs)",
               "gate_not_needed": all(p["both_fast"] for p in pairs)}
         c3 = {"correct_on_minus_off": [p["correct_on"] - p["correct_off"] for p in pairs],
               "incorrect_off": int(off.incorrect.sum()), "incorrect_on": int(on.incorrect.sum()),
@@ -150,6 +151,16 @@ def acceptance(valid: pd.DataFrame) -> dict:
         c4["pass"] = bool(sum(c4["D_on"]) <= sum(c4["D_off"]))
         res[f"fault_{int(fault_s)}s"] = {"pairs": pairs, "c1_healthy_overhead": c1, "c2_recovery": c2,
                                          "c3_useful_work": c3, "c4_ordinary_users": c4}
+    # C5 (docs/protocol.md section 7): under the unfamiliar fault the DIRECTION of C2-C4 holds in the trials
+    # available; reported as weaker evidence. Direction of C2 = every available pair faster or both fast.
+    for key, r in res.items():
+        if key == "fault_10s":
+            continue
+        direction = {"c2_recovery": all(bool(p["faster_or_both_fast"]) for p in r["pairs"]),
+                     "c3_useful_work": r["c3_useful_work"]["pass"],
+                     "c4_ordinary_users": r["c4_ordinary_users"]["pass"]}
+        r["c5_unfamiliar"] = {"direction_holds": direction, "pass": all(direction.values()),
+                              "pairs": len(r["pairs"]), "evidence": "weaker (unfamiliar fault, few pairs)"}
     return res
 
 

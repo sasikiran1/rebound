@@ -59,13 +59,20 @@ def cmd_analyze(args) -> None:
     from analysis.report import trial_report
     from harness.trial import verify_sums
 
+    failed = 0
     for d in sorted(Path(args.run).glob("tr_*")) if not (Path(args.run) / "trial.json").exists() else [Path(args.run)]:
         bad = verify_sums(d) if (d / "SHA256SUMS").exists() else ["SHA256SUMS missing"]
-        res = analyze(d)
-        trial_report(d, res)
+        if bad:  # fail closed: never analyze a bundle whose recorded files do not match their sums
+            print(f"{d}: INTEGRITY FAILURE {bad[:5]}; not analyzed")
+            failed += 1
+            continue
+        out = d / "reanalysis"  # recorded files are never overwritten
+        res = analyze(d, out)
+        trial_report(d, res, out)
         print(f"{d}: {res['status']} recovery={res['recovery']['verdict']} T_rec={res['recovery']['t_rec_s']} "
-              f"S={res['goals']['success_S']} D={res['background']['lost_service_D']:.0f}"
-              + (f"  CHECKSUM MISMATCH {bad}" if bad else ""))
+              f"S={res['goals']['success_S']} D={res['background']['lost_service_D']:.0f} -> {out}")
+    if failed:
+        raise SystemExit(1)
 
 
 def cmd_mark_crashed(args) -> None:

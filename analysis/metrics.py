@@ -145,11 +145,14 @@ def cohort_of(t: float) -> str | None:
     return None
 
 
-def analyze(trial_dir: str | Path) -> dict:
+def analyze(trial_dir: str | Path, out_dir: str | Path | None = None) -> dict:
+    """Analyze one trial bundle. Derived files go to `out_dir` (default: the trial directory, used only by the trial
+    runner on first analysis); re-analysis must pass a separate directory so recorded files are never overwritten."""
     td = TrialData(trial_dir)
     m = td.manifest
     meta = td.meta
-    out_dir = td.dir
+    out_dir = Path(out_dir) if out_dir else td.dir
+    out_dir.mkdir(parents=True, exist_ok=True)
     be = backend_frame(td)
     samples = samples_frame(td)
     goals = goals_frame(td)

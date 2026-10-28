@@ -180,9 +180,9 @@ def js(v) -> str:
     return json.dumps(v, default=str)
 
 
-def trial_report(trial_dir: str | Path, result: dict) -> Path:
+def trial_report(trial_dir: str | Path, result: dict, out_dir: str | Path | None = None) -> Path:
     trial_dir = Path(trial_dir)
     figs = trial_figures(trial_dir, result)
-    out = trial_dir / "report.html"
+    out = Path(out_dir or trial_dir) / "report.html"
     out.write_text(TRIAL_TEMPLATE.render(r=result, figs=figs, fmt=fmt, js=js))
     return out

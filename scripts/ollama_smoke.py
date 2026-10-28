@@ -26,7 +26,8 @@ async def main() -> None:
     t0 = time.perf_counter()
     r = await client.responses.create(model=model, instructions=instr, input=item, tools=tools, max_output_tokens=256)
     print("first call (includes load):", round(time.perf_counter() - t0, 2), "s", r.status, r.done_reason,
-          [(o.type, getattr(o, "name", None), getattr(o, "arguments", None)) for o in r.output], vars(r.usage)["input_tokens"])
+          [(o.type, getattr(o, "name", None), getattr(o, "arguments", None)) for o in r.output],
+          r.usage.input_tokens)
     for n in levels:
         t0 = time.perf_counter()
         rs = await asyncio.gather(*(client.responses.create(model=model, instructions=instr, input=item, tools=tools,

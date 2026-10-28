@@ -15,10 +15,14 @@ from harness.probe import load_tasks
 from harness.provider import PRICES, Provider, ProviderFailed, cost_usd, make_client
 from oracle.verdicts import verdict_for
 
+# Measured per scheduled goal over the nine eval-v1 agent trials (1,881 goals, full_history continuation):
+# 16,174 input tokens of which 11,807 cached, 777 output tokens; $0.0105 per goal on Spark 1.3.
+TYPICAL_INPUT, TYPICAL_CACHED, TYPICAL_OUTPUT = 16_174, 11_807, 777
+
 
 def estimate(cfg: AgentConfig) -> tuple[float, float]:
-    """(typical, cap) USD for one goal. Typical assumes ~6 calls of ~2.5k input / 300 output tokens."""
-    typical = cost_usd(cfg.model, 6 * 2500, 0, 6 * 300)
+    """(typical, cap) USD for one goal. Typical = the measured eval-v1 token mix (above), not an assumption."""
+    typical = cost_usd(cfg.model, TYPICAL_INPUT, TYPICAL_CACHED, TYPICAL_OUTPUT)
     cap = cost_usd(cfg.model, cfg.max_input_tokens, 0, cfg.max_model_calls * cfg.max_output_tokens)
     return typical, cap
 
