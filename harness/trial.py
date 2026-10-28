@@ -395,8 +395,10 @@ class Trial:
                 s = self.m.scripted
                 samples = step_gap_samples(ROOT / s.think_samples_from) if s.think_samples_from else None
                 if samples is not None:
+                    src = ROOT / s.think_samples_from
                     self.meta["think_samples"] = {"from": s.think_samples_from, "n": len(samples),
-                                                  "p50_s": round(statistics.median(samples), 3) if samples else None}
+                                                  "p50_s": round(statistics.median(samples), 3),
+                                                  "sha256": "sha256:" + hashlib.sha256(src.read_bytes()).hexdigest()}
                 clients["scripted_cfg"] = ScriptedConfig(
                     think_time_s=s.think_time_s, policy=s.policy, think_samples=samples, max_retries=s.max_retries,
                     backoff_base_s=s.backoff_base_s, backoff_cap_s=s.backoff_cap_s,
