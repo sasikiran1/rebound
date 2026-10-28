@@ -132,7 +132,7 @@ def goals_frame(td: TrialData) -> pd.DataFrame:
         rec["oracle_end_reason"] = v.get("end_reason")
         rec["t_commit"] = td.t_wall(v["completed_at"]) if v.get("completed_at") else math.nan
     df = pd.DataFrame(list(goals.values()))
-    for c in ("t_sched", "t_commit", "verdict", "kind", "expected"):
+    for c in ("goal_id", "t_sched", "t_commit", "verdict", "kind", "expected"):  # goal_id: background-only trials
         if c not in df:
             df[c] = math.nan
     return df.sort_values("t_sched").reset_index(drop=True)
