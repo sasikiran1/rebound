@@ -374,3 +374,57 @@ Replay of tr_0002's agent trace (which includes that trial's fault reactions; me
 valid, 228/228 correct, 940 requests replayed open-loop, attempts per goal in the fault cohort 4.45 (identical to
 the source trace), T_rec 21 s, D 8,428.
 
+
+## Audit verification (Wed Oct 28, 00:00 ET; branch `audit-fixes`, no model spend, no new trials)
+
+External audit of HEAD 5694a04 (2026-10-27) checked against the code and the saved bundles. Baseline before any edit:
+77 tests passed, ruff clean, no `sleep` in `backend/`, clean tree, 21 commits.
+
+### Findings confirmed and fixed or bounded
+
+| Finding | Status | Measured evidence |
+|---|---|---|
+| full_history drops reasoning context | Confirmed (agent.py visible-text-only replay); new `stateless_reasoning` mode | unit tests only; needs a live smoke check |
+| Summary pools configurations | Confirmed: old summary put tr_0001 (think 10.1 s) and tr_0003 (10.25 s) in one cell and paired tr_0002 (stored) with tr_0014 (full_history) | valid explore-v1 trials span 5 configuration hashes; new summary refuses to judge |
+| Checksum failure still yields a report | Confirmed; now fails closed | one flipped word in tr_0002's `oracle.jsonl` → INTEGRITY FAILURE, exit 1, nothing written |
+| Provenance omits oracle, schema, generator, lockfile | Confirmed; config_hash v2 covers them, analyzer has its own fingerprint | regression test |
+| Missing baseline passes c1; no c5 | Confirmed; five explicit pass/fail/insufficient verdicts | regression tests |
+| `applied_at` labeled commit time | Confirmed but bounded: it is `clock_timestamp()` of the INSERT, one round trip before COMMIT (about 400 ms in the fault). Renamed `change_inserted_at`; FieldDesk now logs commit acknowledgment | – |
+| Scripted v1 is a weak baseline | Confirmed: abandons after the first read fails 3 times (7 and 5 goals lost in tr_0001, tr_0003). New `robust_v2` | unit tests |
+| Replay overclaimed | Confirmed (tr_0008 replays a faulted trace). Replay now checks its reference; explore_replay marked mechanics-only | – |
+| Goals barely load the API | Confirmed for the fault window itself (below) | – |
+| DB ms is not DB work | Confirmed; relabeled "DB round-trip elapsed ms" | – |
+
+### Re-analysis of saved bundles (key-free, `make verify RUN=runs/explore-v1`)
+
+13 of 14 bundles pass their raw checksums and reproduce every saved version 1 result exactly (status, T_rec,
+recovery verdict, unhealthy seconds, goal verdicts, S, D, background references, retry classes, model cost, gate
+decisions). tr_0010 (runner crashed, already INVALID) cannot be analyzed: its last JSONL line is truncated.
+
+### Fault-window exposure (who held the API, metrics_version 2)
+
+| Trial | Client, gate | Goal share of in-flight time, fault | Goal share of DB round-trip ms, fault | Goal requests in the fault (refused) |
+|---|---|---|---|---|
+| tr_0001 / tr_0003 | scripted v1, off | 0.33% / 0.30% | 0.13% / 0.11% | 25 / 23 |
+| tr_0002 | agent stored, off | 0.31% | 0.09% | 15 |
+| tr_0004–tr_0007 | scripted v1, on | 0–0.44% | 0–0.02% | 30 (30) in tr_0007 |
+| tr_0011–tr_0013 | agent stored, on (inconclusive) | 0–0.88% | 0% | 14–18 (all refused) |
+| tr_0014 | agent full_history, on | 1.70% | 2.70% | 82 (80) |
+
+Background traffic held at least 98% of the API's in-flight time during every fault. At this load no goal client can
+move recovery much; T_rec and D differences between client conditions are not attributable to the clients.
+
+### Back-pressure (Retry-After) compliance, new
+
+| Trials | Client | Too-early requests after a Retry-After refusal | Median gap |
+|---|---|---|---|
+| tr_0004–tr_0007 | scripted v1 | 0 of 97 | 2.0 s |
+| tr_0011–tr_0013 | agent, previous_response_id | 0 of 50 | 8.6–9.0 s |
+| tr_0014 | agent, full_history | 84 of 84 (10 goals) | 0.77 s |
+
+Slow agents complied only because a model call took longer than Retry-After. The tool interface has no way to wait.
+Witness g_0083 (tr_0014): 12 refusals in 9.4 s, five calls to the expensive search, tool budget exhausted, oracle
+`failed`. These are exploratory observations from one trial under the old context mode; `docs/screening_v2.md`
+predeclares the test that can confirm or refute them.
+
+Tests after the changes: 108 passed (31 new), ruff clean, no-sleep check clean.
