@@ -385,7 +385,7 @@ External audit of HEAD 5694a04 (2026-10-27) checked against the code and the sav
 | Finding | Status | Measured evidence |
 |---|---|---|
 | full_history drops reasoning context | Confirmed (agent.py visible-text-only replay); new `stateless_reasoning` mode | unit tests only; needs a live smoke check |
-| Summary pools configurations | Confirmed: old summary put tr_0001 (think 10.1 s) and tr_0003 (10.25 s) in one cell and paired tr_0002 (stored) with tr_0014 (full_history) | valid explore-v1 trials span 5 configuration hashes; new summary refuses to judge |
+| Summary pools configurations | Confirmed: the old summary pooled four gate settings (tr_0004–07) into one cell, put tr_0001 (think 10.1 s) and tr_0003 (10.25 s) together, and paired tr_0002 (stored, gate off) with tr_0014 (full_history, gate on) as an acceptance pair that passed c3 and c4 | the 9 valid explore-v1 trials span 8 configuration hashes; the new summary refuses to judge |
 | Checksum failure still yields a report | Confirmed; now fails closed | one flipped word in tr_0002's `oracle.jsonl` → INTEGRITY FAILURE, exit 1, nothing written |
 | Provenance omits oracle, schema, generator, lockfile | Confirmed; config_hash v2 covers them, analyzer has its own fingerprint | regression test |
 | Missing baseline passes c1; no c5 | Confirmed; five explicit pass/fail/insufficient verdicts | regression tests |
@@ -427,4 +427,4 @@ Witness g_0083 (tr_0014): 12 refusals in 9.4 s, five calls to the expensive sear
 `failed`. These are exploratory observations from one trial under the old context mode; `docs/screening_v2.md`
 predeclares the test that can confirm or refute them.
 
-Tests after the changes: 108 passed (31 new), ruff clean, no-sleep check clean.
+Tests after the changes: 115 passed (38 new), ruff clean, no-sleep check clean.
