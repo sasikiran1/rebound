@@ -1,0 +1,128 @@
+{
+  "order_seed": 20261101,
+  "experiment": "eval-v1",
+  "manifest": "manifests/frozen/eval_v1.yaml",
+  "trials": [
+    {
+      "n": 1,
+      "condition": "agent",
+      "gate": "off",
+      "args": "--no-fault --label healthy-reference",
+      "note": "healthy reference trial; its client.jsonl is the replay trace"
+    },
+    {
+      "n": 2,
+      "condition": "scripted",
+      "gate": "off",
+      "args": "--block 1 --repeat 1 --label block1-scripted-gate-off"
+    },
+    {
+      "n": 3,
+      "condition": "scripted",
+      "gate": "on",
+      "args": "--block 1 --repeat 1 --label block1-scripted-gate-on"
+    },
+    {
+      "n": 4,
+      "condition": "agent",
+      "gate": "on",
+      "args": "--block 1 --repeat 1 --label block1-agent-gate-on"
+    },
+    {
+      "n": 5,
+      "condition": "replay",
+      "gate": "off",
+      "args": "--block 1 --repeat 1 --label block1-replay-gate-off"
+    },
+    {
+      "n": 6,
+      "condition": "agent",
+      "gate": "off",
+      "args": "--block 1 --repeat 1 --label block1-agent-gate-off"
+    },
+    {
+      "n": 7,
+      "condition": "agent",
+      "gate": "on",
+      "args": "--block 2 --repeat 2 --label block2-agent-gate-on"
+    },
+    {
+      "n": 8,
+      "condition": "scripted",
+      "gate": "on",
+      "args": "--block 2 --repeat 2 --label block2-scripted-gate-on"
+    },
+    {
+      "n": 9,
+      "condition": "scripted",
+      "gate": "off",
+      "args": "--block 2 --repeat 2 --label block2-scripted-gate-off"
+    },
+    {
+      "n": 10,
+      "condition": "replay",
+      "gate": "off",
+      "args": "--block 2 --repeat 2 --label block2-replay-gate-off"
+    },
+    {
+      "n": 11,
+      "condition": "agent",
+      "gate": "off",
+      "args": "--block 2 --repeat 2 --label block2-agent-gate-off"
+    },
+    {
+      "n": 12,
+      "condition": "agent",
+      "gate": "on",
+      "args": "--block 3 --repeat 3 --label block3-agent-gate-on"
+    },
+    {
+      "n": 13,
+      "condition": "scripted",
+      "gate": "on",
+      "args": "--block 3 --repeat 3 --label block3-scripted-gate-on"
+    },
+    {
+      "n": 14,
+      "condition": "agent",
+      "gate": "off",
+      "args": "--block 3 --repeat 3 --label block3-agent-gate-off"
+    },
+    {
+      "n": 15,
+      "condition": "replay",
+      "gate": "off",
+      "args": "--block 3 --repeat 3 --label block3-replay-gate-off"
+    },
+    {
+      "n": 16,
+      "condition": "scripted",
+      "gate": "off",
+      "args": "--block 3 --repeat 3 --label block3-scripted-gate-off"
+    },
+    {
+      "n": 17,
+      "condition": "agent",
+      "gate": "off",
+      "args": "--fault-duration-s 20 --repeat 1 --label unfamiliar20s-agent-gate-off-1"
+    },
+    {
+      "n": 18,
+      "condition": "agent",
+      "gate": "on",
+      "args": "--fault-duration-s 20 --repeat 1 --label unfamiliar20s-agent-gate-on-1"
+    },
+    {
+      "n": 19,
+      "condition": "agent",
+      "gate": "off",
+      "args": "--fault-duration-s 20 --repeat 2 --label unfamiliar20s-agent-gate-off-2"
+    },
+    {
+      "n": 20,
+      "condition": "agent",
+      "gate": "on",
+      "args": "--fault-duration-s 20 --repeat 2 --label unfamiliar20s-agent-gate-on-2"
+    }
+  ]
+}

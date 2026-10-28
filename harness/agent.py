@@ -28,6 +28,10 @@ class AgentConfig:
     max_tool_calls: int = 14
     goal_deadline_s: float = 240.0
     max_input_tokens: int = 80_000
+    # previous_response_id: provider-stored conversation.
+    # full_history: every call carries the goal's whole conversation from the runner's own records, store=False.
+    # Exploration found the provider losing about 3% of stored responses deep in a chain (docs/results.md).
+    continuation: str = "previous_response_id"
 
 
 @dataclass
@@ -96,8 +100,11 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
     events.emit("goal.started", **ids, task_id=task["task_id"])
     t_start = time.monotonic()
 
+    full_history = cfg.continuation == "full_history"
+
     async def loop() -> None:
         next_input: list = [{"role": "user", "content": "Please handle the task."}]
+        history: list = []  # full_history mode: every input item and model output item so far
         previous_id = None
         while True:
             if out.model_calls >= cfg.max_model_calls:
@@ -108,12 +115,17 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
                 return
             out.model_calls += 1
             mc_id = model_call_id(goal_n, out.model_calls)
+            if full_history:
+                history += next_input
+                call_input, continuation = list(history), {"store": False}
+            else:
+                call_input, continuation = next_input, {"previous_response_id": previous_id, "store": True}
             try:
                 res = await provider.create(
-                    model=cfg.model, instructions=instructions, input=next_input, tools=tools,
-                    previous_response_id=previous_id, reasoning={"effort": cfg.reasoning_effort},
-                    max_output_tokens=cfg.max_output_tokens, parallel_tool_calls=False, tool_choice="auto",
-                    prompt_cache_key=cfg.prompt_cache_key, store=True,
+                    model=cfg.model, instructions=instructions, input=call_input, tools=tools,
+                    reasoning={"effort": cfg.reasoning_effort}, max_output_tokens=cfg.max_output_tokens,
+                    parallel_tool_calls=False, tool_choice="auto", prompt_cache_key=cfg.prompt_cache_key,
+                    **continuation,
                 )
             except ProviderFailed as exc:
                 events.emit("model.call", **ids, model_call_id=mc_id, model=cfg.model, status="provider_failed",
@@ -133,11 +145,17 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
                 "model.call", **ids, model_call_id=mc_id, model=cfg.model, prompt_hash=prompt_hash,
                 tools_hash=tools_hash, **usage, cost_usd=round(call_cost, 6), latency_ms=round(res.latency_ms, 1),
                 status="ok", provider_retries=res.retries, provider_wait_s=res.wait_s, response_id=resp.id,
-                previous_response_id=previous_id, response_status=getattr(resp, "status", None),
+                previous_response_id=None if full_history else previous_id, continuation=cfg.continuation,
+                input_items=len(call_input), response_status=getattr(resp, "status", None),
             )
             previous_id = resp.id
             calls = [item for item in resp.output if item.type == "function_call"]
             text = _visible_text(resp)
+            if full_history:  # visible text and tool calls only; hidden reasoning is not carried over
+                if text:
+                    history.append({"role": "assistant", "content": text})
+                history += [{"type": "function_call", "call_id": c.call_id, "name": c.name, "arguments": c.arguments}
+                            for c in calls]
             events.emit("agent.message", **ids, model_call_id=mc_id, text=text,
                         tool_calls=[{"name": c.name, "arguments": c.arguments} for c in calls])
             step = {"model_call": mc_id, "model_ms": round(res.latency_ms), **usage, "cost_usd": call_cost,

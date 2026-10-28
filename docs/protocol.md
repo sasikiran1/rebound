@@ -93,6 +93,13 @@ invalid. Every trial is kept with its state and reasons.
 - Replay trace: one healthy reference agent trial (no fault) on set B before block 1.
 - Unfamiliar condition: 20 s fault, agent gate-off and gate-on (two each if budget allows, one minimum).
 - Between trials: full reset (always), 60 s cool-down.
+- Frozen settings chosen in exploration (task set A): background 520 rps (total healthy DB time about 49% of the
+  measured 3,737 DB-ms/s capacity), scripted think time 10.25 s (agents' median healthy step time), gate 12 tokens,
+  queue max 24, queue wait 1.5 s, Retry-After 2 s (smallest scripted healthy-period overhead in the 2 × 2 grid).
+- Provider handling: retries on 429, 500 and 503 as in docs/spec.md; additionally the 400 "referenced response not
+  found or expired" (a stored-response race measured in exploration) is retried after 1, 2 and 4 s. Every other 400
+  and every 504 ends the goal as `provider_failed`.
+- Known scale-model limit, stated in every report: goals are under 1% of healthy DB time.
 
 ## 7. Gate acceptance criteria (`analysis/experiment.py`), judged on agent cells
 

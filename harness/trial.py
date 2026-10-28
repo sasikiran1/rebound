@@ -336,7 +336,7 @@ class Trial:
                     max_output_tokens=self.m.model.max_output_tokens, prompt_cache_key=self.m.model.prompt_cache_key,
                     prompt_path=self.m.model.prompt, max_model_calls=lim.model_calls_per_goal,
                     max_tool_calls=lim.tool_calls_per_goal, goal_deadline_s=lim.goal_deadline_s,
-                    max_input_tokens=lim.input_tokens_per_goal)
+                    max_input_tokens=lim.input_tokens_per_goal, continuation=self.m.model.continuation)
             elif self.condition == "scripted":
                 s = self.m.scripted
                 clients["scripted_cfg"] = ScriptedConfig(

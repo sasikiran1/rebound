@@ -309,6 +309,30 @@ agent gate-on trials. WSL then returned I/O errors for every command and Docker 
 
 Model spend to this point: $2.37 (Day 1 + tr_0002) + $0.78 + $1.80 = $4.95.
 
+### Agent gate-on re-runs (tr_0011, tr_0012) — kept, both INCONCLUSIVE (provider)
+
+| Trial | Gate | T_rec | D | correct / provider_failed | Baseline bg p95 | Baseline rejections | Model $ |
+|---|---|---|---|---|---|---|---|
+| tr_0002 | off | 20 s | 7,733 | 228 / 0 | 7.66 ms | 0 | 2.36 |
+| tr_0011 | 12 tokens, 1.5 s | 10 s | 5,015 | 213 / 15 | 7.66 ms | 0.06% | 2.20 |
+| tr_0012 | 8 tokens, 1.5 s | 10 s | 5,092 | 214 / 14 | 6.91 ms | 0 | 2.22 |
+
+Both are inconclusive under the frozen rule (> 5% of goals `provider_failed`). Every provider failure (36 and 43
+calls) was HTTP 400 "invalid_request_error referenced response not found or expired". They were spread over the
+whole trial (32 s to 555 s), not tied to the fault. Each failing continuation referenced a response created only
+0.8–3.6 s earlier (median 1.4–1.6 s), i.e. on turns 3–5 right after a tool call that took milliseconds; successful
+continuations referenced responses with a median age of 9.3 s (up to 47 s). So this is a read-after-write race in
+the provider's response store, not expiry. It did not occur on Day 1 or in tr_0002 earlier the same day.
+
+**Contradiction with the design (provider table: 400 → no retry), changed:** the provider wrapper now
+treats this one 400 like a 503: up to 3 retries after fixed waits of 1, 2 and 4 s, recorded as provider retries and
+provider wait. Any other 400 still ends the goal as `provider_failed`. This is a model-provider retry, not a
+transport retry to FieldDesk, so rule 2 still holds. Validated in tr_0013 before the freeze.
+
+Gate choice for the freeze, by the section 7a rule: **12 tokens, queue max 24, queue wait 1.5 s** (smallest scripted
+healthy-period overhead, +1.9%). In the agent trials both candidates gave the same recovery (T_rec 10 s vs 20 s with
+the gate off) and nearly the same D (5,015 vs 5,092), so the agent tie-break did not change the choice.
+
 ### Replay mechanics test (tr_0008)
 
 Replay of tr_0002's agent trace (which includes that trial's fault reactions; mechanics only, not a control):

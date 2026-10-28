@@ -11,7 +11,8 @@ background: {rate_rps: 520, mix: {day_availability: 0.7, get_appointment: 0.3}, 
 windows: {warmup: [0, 60], baseline: [60, 180], observe_s: 360, drain_deadline_s: 240}
 fault: {kind: latency, proxy: pg, direction: downstream, latency_ms: 400, jitter_ms: 50, start_s: 180, duration_s: 10}
 gate: {tokens: 8, queue_max: 16, queue_wait_ms: 1500, retry_after_s: 2}  # TUNABLE (grid in section 7a)
-model: {id: muse-spark-1.3, api: responses, continuation: previous_response_id, reasoning_effort: low,
+# continuation: full_history since tr_0014 (provider lost ~3% of stored responses deep in chains; docs/results.md)
+model: {id: muse-spark-1.3, api: responses, continuation: full_history, reasoning_effort: low,
         max_output_tokens: 2048, parallel_tool_calls: false, prompt_cache_key: rebound-agent-v1,
         prompt: prompts/agent_v1.md, tools: prompts/tools_v1.json}
 scripted: {think_time_s: 10.25}  # agents' median healthy step time, measured in runs/explore-v1/tr_0002
