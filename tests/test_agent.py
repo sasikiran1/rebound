@@ -71,6 +71,22 @@ async def test_happy_path_chains_previous_response_id(tmp_path):
     assert out.input_tokens == 4000
 
 
+async def test_full_history_resends_conversation_without_stored_responses(tmp_path):
+    out, model = await run(tmp_path, [
+        fn_call("get_customer_appointments", {"customer_id": 11}, 1),
+        fn_call("get_appointment", {"appointment_id": 101}, 2),
+        message("Done.", 3),
+    ], AgentConfig(continuation="full_history"))
+    assert out.model_calls == 3
+    assert all("previous_response_id" not in r and r["store"] is False for r in model.requests)
+    sizes = [len(r["input"]) for r in model.requests]
+    assert sizes == [1, 3, 5]  # user; + call 1 and its output; + call 2 and its output
+    second = model.requests[1]["input"]
+    assert second[1] == {"type": "function_call", "call_id": "call_1", "name": "get_customer_appointments",
+                         "arguments": '{"customer_id": 11}'}
+    assert second[2]["type"] == "function_call_output" and second[2]["call_id"] == "call_1"
+
+
 async def test_defer_ends_goal_without_another_model_call(tmp_path):
     out, model = await run(tmp_path, [fn_call("defer_goal", {"reason": "no slot"}, 1)])
     assert out.end_reason == "deferred" and out.deferred_reason == "no slot" and len(model.requests) == 1

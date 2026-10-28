@@ -1,5 +1,14 @@
 # Rebound evaluation protocol (frozen before evaluation)
 
+> **Version 2 draft (2026-10-28, not frozen).** Changes from the draft below, made after the 2026-10-27 audit and
+> before any evaluation trial: completion time uses FieldDesk's commit acknowledgment (`completion_basis`); every
+> acceptance criterion ends in pass, fail or insufficient_evidence and missing inputs never pass; evidence from more
+> than one compatibility fingerprint or analyzer is not judged; re-analysis fails closed on raw checksum mismatches;
+> the per-trial recovery contract (`analysis/contracts.py`) and back-pressure compliance are reported; scripted
+> baseline `robust_v2`, background-only arm and the runtime Retry-After guard are available as declared arms; agent
+> continuation `stateless_reasoning`. The screening that decides the confirmatory design is predeclared in
+> `docs/screening_v2.md`. The freeze will restate every rule in one place.
+
 This file fixes, before the first evaluation trial, every rule the evaluation is judged by. The frozen manifest is
 `manifests/frozen/eval_v1.yaml`; the commit that adds both files is recorded in `docs/FREEZE.md`. After that commit
 nothing that affects behavior or analysis changes; a change means a new configuration and new trials.
@@ -53,7 +62,8 @@ The oracle reads final database state through the read-only role on the direct p
 verdict per scheduled goal: `correct`, `incorrect`, `duplicate_effect`, `wrongly_deferred`, `failed`, `unfinished`,
 `rejected`, `provider_failed` (definitions in the design). A goal's end reason comes from the harness;
 `rejected` means no effect and every HTTP attempt of the goal received the gate's 503 with Retry-After.
-Completion time = `appointment_changes.applied_at` (backend commit) − goal arrival time.
+Completion time = FieldDesk's commit acknowledgment − goal arrival time (v2); bundles without it use
+`appointment_changes.applied_at`, the INSERT time one round trip before COMMIT, and say so.
 
 ## 4. Metrics (`analysis/metrics.py`)
 
@@ -93,6 +103,15 @@ invalid. Every trial is kept with its state and reasons.
 - Replay trace: one healthy reference agent trial (no fault) on set B before block 1.
 - Unfamiliar condition: 20 s fault, agent gate-off and gate-on (two each if budget allows, one minimum).
 - Between trials: full reset (always), 60 s cool-down.
+- Frozen settings chosen in exploration (task set A): background 520 rps (total healthy DB time about 49% of the
+  measured 3,737 DB-ms/s capacity), scripted think time 10.25 s (agents' median healthy step time), gate 12 tokens,
+  queue max 24, queue wait 1.5 s, Retry-After 2 s (smallest scripted healthy-period overhead in the 2 × 2 grid).
+- Model continuation: `full_history` (each call carries the goal's whole visible conversation, `store=False`),
+  not `previous_response_id`: in exploration the provider permanently lost about 3% of stored responses that were
+  themselves continuations, which made every agent trial inconclusive (tr_0011–tr_0013).
+- Provider handling: retries on 429, 500 and 503 as in docs/spec.md (plus the 400 "referenced response not found",
+  which cannot occur without stored responses). Every other 400 and every 504 ends the goal as `provider_failed`.
+- Known scale-model limit, stated in every report: goals are under 1% of healthy DB time.
 
 ## 7. Gate acceptance criteria (`analysis/experiment.py`), judged on agent cells
 

@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import shutil
 import statistics
 import time
 from pathlib import Path
@@ -26,14 +27,17 @@ from harness.agent import run_goal as run_agent_goal
 from harness.events import EventLog, goal_ids
 from harness.fault import Canary, Toxiproxy
 from harness.load import Background, RunnerHealth, poisson_arrivals
-from harness.manifest import ROOT, Manifest, config_hash, git_sha, load, resolve
+from harness.manifest import ROOT, Manifest, compat_fingerprint, config_hash, git_sha, load, resolve
 from harness.replay import load_trace
 from harness.replay import run_goal as run_replay_goal
 from harness.scripted import ScriptedConfig
 from harness.scripted import run_goal as run_scripted_goal
 from oracle.verdicts import verdict_for
 
-CONDITIONS = ("agent", "scripted", "replay")
+# background: no goals at all, only background traffic (attribution control: what the fault and the gate
+# do to ordinary users when no goal client is present).
+CONDITIONS = ("agent", "scripted", "replay", "background")
+MIN_FREE_GB = 10.0
 
 
 class TrialAbort(Exception):
@@ -64,6 +68,15 @@ def sha256sums(trial_dir: Path) -> None:
     (trial_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n")
 
 
+# Files the analysis writes. Everything else in a bundle is raw evidence recorded during the trial.
+DERIVED_FILES = {"verdict.json", "report.html", "per_second.csv", "goals.csv", "cohorts.csv", "retry_classes.csv",
+                 "lost_service.csv", "contract.json"}
+
+
+def is_derived(name: str) -> bool:
+    return name in DERIVED_FILES or name.startswith("reanalysis/")
+
+
 def verify_sums(trial_dir: Path) -> list[str]:
     bad = []
     for line in (trial_dir / "SHA256SUMS").read_text().splitlines():
@@ -74,10 +87,33 @@ def verify_sums(trial_dir: Path) -> list[str]:
     return bad
 
 
+def verify_raw(trial_dir: Path) -> list[str]:
+    """Integrity problems in a bundle's raw evidence: missing SHA256SUMS, a listed raw file missing or changed, or a
+    raw file present but not listed. An empty list means every raw file matches its recorded hash."""
+    trial_dir = Path(trial_dir)
+    sums = trial_dir / "SHA256SUMS"
+    if not sums.exists():
+        return ["SHA256SUMS missing"]
+    listed = {}
+    for line in sums.read_text().splitlines():
+        if line.strip():
+            digest, name = line.split("  ", 1)
+            listed[name] = digest
+    bad = [n for n in verify_sums(trial_dir) if not is_derived(n)]
+    for p in sorted(trial_dir.rglob("*")):
+        rel = str(p.relative_to(trial_dir))
+        if p.is_file() and rel != "SHA256SUMS" and not is_derived(rel) and rel not in listed:
+            bad.append(f"{rel} (not in SHA256SUMS)")
+    if not any(not is_derived(n) for n in listed):
+        bad.append("SHA256SUMS lists no raw files")
+    return bad
+
+
 class Trial:
     def __init__(self, manifest_path: str, condition: str, gate_on: bool, experiment: str | None = None,
                  repeat: int | None = None, block: int | None = None, label: str | None = None,
-                 fault_enabled: bool | None = None, fault_duration_s: float | None = None):
+                 fault_enabled: bool | None = None, fault_duration_s: float | None = None,
+                 retry_after_guard: bool | None = None, unpaced: bool = False):
         if condition not in CONDITIONS:
             raise ValueError(f"condition must be one of {CONDITIONS}")
         self.m = load(manifest_path)
@@ -85,6 +121,11 @@ class Trial:
             self.m.fault_enabled = fault_enabled
         if fault_duration_s is not None:
             self.m.fault.duration_s = fault_duration_s
+        # Declared treatment overrides (harness/manifest.py TREATMENT_FIELDS); recorded in the resolved manifest.
+        if retry_after_guard is not None:
+            self.m.agent_runtime.retry_after_guard = retry_after_guard
+        if unpaced:
+            self.m.scripted.think_time_s, self.m.scripted.think_samples_from = 0.0, None
         self.manifest_path = manifest_path
         self.condition, self.gate_on = condition, gate_on
         self.experiment = experiment or self.m.experiment
@@ -94,11 +135,17 @@ class Trial:
         self.dir.mkdir(parents=True)
         self.resolved = resolve(self.m)
         self.resolved["backend"]["repo_sha"] = git_sha()
+        if self.m.replay_trace:
+            trace = ROOT / self.m.replay_trace
+            self.resolved["replay_trace_sha256"] = (
+                "sha256:" + hashlib.sha256(trace.read_bytes()).hexdigest() if trace.exists() else None)
         self.config_hash = config_hash(self.resolved)
+        self.compat_fingerprint = compat_fingerprint(self.resolved)
         self.meta = {
             "trial_id": self.trial_id, "experiment_id": self.experiment, "condition": condition,
             "gate": "on" if gate_on else "off", "repeat": repeat, "block": block, "label": label,
-            "manifest_path": manifest_path, "config_hash": self.config_hash, "states": [], "invalid_reasons": [],
+            "manifest_path": manifest_path, "config_hash": self.config_hash,
+            "compat_fingerprint": self.compat_fingerprint, "states": [], "invalid_reasons": [],
             "inconclusive_reasons": [], "runner_pid": os.getpid(), "runner_affinity": sorted(os.sched_getaffinity(0)),
         }
         self.events = EventLog(self.dir, experiment_id=self.experiment, trial_id=self.trial_id, condition=condition,
@@ -167,10 +214,21 @@ class Trial:
         checks["cpusets"] = cpus
         checks["cpu_separation"] = not (runner & (sut.parse_cpuset(cpus["postgres"]) |
                                                   sut.parse_cpuset(cpus["fielddesk"])))
+        # The WSL and Docker virtual disks live on the Windows drive; when it filled up mid-trial (explore-v1
+        # tr_0010) every write failed. Require headroom on both the Linux and the host filesystem.
+        for name, path in (("disk_free_gb_root", "/"), ("disk_free_gb_host", "/mnt/c")):
+            if os.path.exists(path):
+                checks[name] = round(shutil.disk_usage(path).free / 1e9, 1)
+                if checks[name] < MIN_FREE_GB:
+                    checks[f"{name}_ok"] = False
         if self.condition == "agent":
             checks["model_key"] = bool(os.environ.get("MODEL_API_KEY"))
         if self.condition == "replay":
             checks["replay_trace"] = bool(self.m.replay_trace and (ROOT / self.m.replay_trace).exists())
+            if checks["replay_trace"]:
+                ref = replay_reference(ROOT / self.m.replay_trace, self.m)
+                self.meta["replay_reference"] = ref
+                checks["replay_reference_ok"] = not ref["problems"] or self.m.replay_mechanics_only
         self.meta["preflight"] = checks
         failed = [k for k, v in checks.items() if v is False]
         if failed:
@@ -297,6 +355,9 @@ class Trial:
 
     async def arrivals(self, clients: dict, goal_tasks: list[asyncio.Task]) -> None:
         a = self.m.arrivals
+        if self.condition == "background":  # attribution control: the same trial with no goal clients at all
+            self.meta["arrivals_planned"] = 0
+            return
         times = poisson_arrivals(a.goals_per_s, a.seed, a.start_s, a.stop_s)
         if len(times) > len(self.tasks):
             raise TrialAbort("INVALID", f"{len(times)} arrivals but only {len(self.tasks)} tasks")
@@ -315,8 +376,10 @@ class Trial:
         try:
             await self.prepare()
             http = new_http_client()
+            guard = self.condition == "agent" and self.m.agent_runtime.retry_after_guard
             clients = {"adapter": ToolAdapter(settings.FIELDDESK_URL, http, load_tools(self.m.model.tools),
-                                              self.events)}
+                                              self.events, retry_after_guard=guard,
+                                              retry_after_guard_cap_s=self.m.agent_runtime.retry_after_guard_cap_s)}
             clients["tools"] = load_tools(self.m.model.tools)
             if self.condition == "agent":
                 from harness.provider import Provider, make_client
@@ -327,14 +390,21 @@ class Trial:
                     max_output_tokens=self.m.model.max_output_tokens, prompt_cache_key=self.m.model.prompt_cache_key,
                     prompt_path=self.m.model.prompt, max_model_calls=lim.model_calls_per_goal,
                     max_tool_calls=lim.tool_calls_per_goal, goal_deadline_s=lim.goal_deadline_s,
-                    max_input_tokens=lim.input_tokens_per_goal)
+                    max_input_tokens=lim.input_tokens_per_goal, continuation=self.m.model.continuation)
             elif self.condition == "scripted":
                 s = self.m.scripted
+                samples = step_gap_samples(ROOT / s.think_samples_from) if s.think_samples_from else None
+                if samples is not None:
+                    src = ROOT / s.think_samples_from
+                    self.meta["think_samples"] = {"from": s.think_samples_from, "n": len(samples),
+                                                  "p50_s": round(statistics.median(samples), 3),
+                                                  "sha256": "sha256:" + hashlib.sha256(src.read_bytes()).hexdigest()}
                 clients["scripted_cfg"] = ScriptedConfig(
-                    think_time_s=s.think_time_s, max_retries=s.max_retries, backoff_base_s=s.backoff_base_s,
-                    backoff_cap_s=s.backoff_cap_s, retry_after_cap_s=s.retry_after_cap_s,
-                    request_budget=s.request_budget, goal_deadline_s=self.m.limits.goal_deadline_s, seed=s.seed)
-            else:
+                    think_time_s=s.think_time_s, policy=s.policy, think_samples=samples, max_retries=s.max_retries,
+                    backoff_base_s=s.backoff_base_s, backoff_cap_s=s.backoff_cap_s,
+                    retry_after_cap_s=s.retry_after_cap_s, request_budget=s.request_budget,
+                    goal_deadline_s=self.m.limits.goal_deadline_s, seed=s.seed)
+            elif self.condition == "replay":
                 clients["trace"] = load_trace(ROOT / self.m.replay_trace)
             self.canary: list[tuple[float, float]] = []
 
@@ -424,10 +494,13 @@ class Trial:
         self.meta["final_state"] = final
         self.save_meta()
         try:
+            from analysis.contracts import trial_contract
             from analysis.metrics import analyze
             from analysis.report import trial_report
             result = analyze(self.dir)
             trial_report(self.dir, result)
+            (self.dir / "contract.json").write_text(
+                json.dumps(trial_contract(result, integrity_ok=True), indent=2, default=str) + "\n")
             if final == "COMPLETE" and result["status"] != "valid":
                 final = "INVALID" if result["status"] == "invalid" else "INCONCLUSIVE"
         except Exception as exc:  # noqa: BLE001
@@ -449,9 +522,62 @@ class Trial:
                 v = await verdict_for(conn, task, end_reason)
                 self.events.emit("oracle.verdict", goal_id=goal_ids(n)["goal_id"], task_id=task["task_id"],
                                  verdict=v["verdict"],
-                                 end_reason=v["end_reason"], completed_at=v["completed_at"], facts=v["facts"])
+                                 end_reason=v["end_reason"], change_inserted_at=v["change_inserted_at"],
+                                 facts=v["facts"])
         finally:
             await conn.close()
+
+
+def step_gap_samples(client_jsonl: Path, cohort: tuple[float, float] = (60, 150)) -> list[float]:
+    """Gaps between consecutive tool operations of each live-agent goal scheduled in the baseline cohort of a recorded
+    trial (the same definition as `agent_step_s_p50` in analysis/metrics.py)."""
+    sched, ops = {}, {}
+    t0 = json.loads((client_jsonl.parent / "trial.json").read_text())["t0_mono_ns"]
+    for line in client_jsonl.read_text().splitlines():
+        e = json.loads(line)
+        if e.get("actor_kind") != "agent" or not e.get("goal_id"):
+            continue
+        if e["event_type"] == "goal.scheduled":
+            sched[e["goal_id"]] = (e["ts_mono_ns"] - t0) / 1e9
+        elif e["event_type"] == "tool.op" and e.get("status") != "invalid_arguments":
+            ops.setdefault(e["goal_id"], []).append(e["ts_mono_ns"] / 1e9)
+    gaps = []
+    for g, ts in ops.items():
+        if cohort[0] <= sched.get(g, -1) < cohort[1]:
+            gaps += [b - a for a, b in zip(ts, ts[1:], strict=False)]
+    if not gaps:
+        raise TrialAbort("INVALID", f"no baseline step gaps in {client_jsonl}")
+    return gaps
+
+
+def replay_reference(trace: Path, m: Manifest) -> dict:
+    """Provenance of a replay trace: its hash and its source trial. A replay control needs a healthy (no fault) live
+    agent reference on the same task file and arrival seed (audit finding 8: a faulted trace already contains fault
+    reactions, so replaying it is a mechanics test, not a control). Problems are listed; the caller decides."""
+    ref_dir = trace.parent
+    out = {"trace": str(trace.relative_to(ROOT)) if trace.is_relative_to(ROOT) else str(trace),
+           "trace_sha256": "sha256:" + hashlib.sha256(trace.read_bytes()).hexdigest(), "problems": []}
+    try:
+        meta = json.loads((ref_dir / "trial.json").read_text())
+        res = json.loads((ref_dir / "manifest.resolved.json").read_text())
+    except (OSError, ValueError) as exc:
+        out["problems"].append(f"reference trial files unreadable: {exc}")
+        return out
+    out.update(trial_id=meta.get("trial_id"), condition=meta.get("condition"), final_state=meta.get("final_state"),
+               fault_enabled=res.get("fault_enabled", True), config_hash=meta.get("config_hash"))
+    if meta.get("condition") != "agent":
+        out["problems"].append(f"reference condition is {meta.get('condition')!r}, not a live agent trial")
+    if res.get("fault_enabled", True):
+        out["problems"].append("reference trial had the fault enabled (its trace contains fault reactions)")
+    if meta.get("final_state") != "COMPLETE":
+        out["problems"].append(f"reference trial ended {meta.get('final_state')!r}")
+    if res.get("tasks", {}).get("sha256") != m.tasks.sha256:
+        out["problems"].append("reference task file differs")
+    if res.get("arrivals", {}).get("seed") != m.arrivals.seed:
+        out["problems"].append("reference arrival seed differs")
+    if (ref_dir / "SHA256SUMS").exists() and verify_raw(ref_dir):
+        out["problems"].append("reference bundle fails its raw checksums")
+    return out
 
 
 def run(manifest: str, condition: str, gate: str, **kw) -> Path:

@@ -64,6 +64,22 @@ async def test_no_retry_codes(code):
     assert client.responses.calls == 1 and waits == [] and info.value.status == code
 
 
+NOT_STORED = {"error": {"type": "invalid_request_error", "message": "referenced response not found or expired"}}
+
+
+async def test_not_yet_stored_400_is_retried_with_fixed_backoff():
+    p, client, waits = provider([status_error(400, body=NOT_STORED), status_error(400, body=NOT_STORED), "ok"])
+    res = await p.create(previous_response_id="resp_1")
+    assert res.response == "ok" and res.retries == 2 and waits == [1.0, 2.0]
+
+
+async def test_not_yet_stored_400_gives_up_after_three_retries():
+    p, client, waits = provider([status_error(400, body=NOT_STORED) for _ in range(4)])
+    with pytest.raises(ProviderFailed) as info:
+        await p.create(previous_response_id="resp_1")
+    assert client.responses.calls == 4 and waits == [1.0, 2.0, 4.0] and info.value.status == 400
+
+
 def test_spark_cost_formula():
     # 10k input of which 4k cached, 1k output: (1.25*6000 + 0.15*4000 + 4.25*1000) / 1e6
     assert cost_usd("muse-spark-1.3", 10_000, 4_000, 1_000) == pytest.approx(0.01235)

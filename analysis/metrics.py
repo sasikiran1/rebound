@@ -2,6 +2,13 @@
 
 Recovery and background service use backend-side data only (backend.jsonl, samples.jsonl). Correctness comes only
 from oracle.jsonl. Every rate divides by goals scheduled.
+
+"DB ms" everywhere is the summed wall time of a request's database round trips as seen by FieldDesk (queries, BEGIN,
+COMMIT, pool reset). It includes the proxy hop and therefore the injected latency; it is not PostgreSQL CPU or
+intrinsic query work (audit finding 10).
+
+metrics_version 2 (2026-10-28) adds, without changing any version 1 value: commit-acknowledgment completion times,
+fault-window exposure shares, back-pressure (Retry-After) compliance, and analyzer/compatibility fingerprints.
 """
 
 from __future__ import annotations
@@ -16,6 +23,10 @@ import numpy as np
 import pandas as pd
 
 from analysis import recovery, retries
+from harness.manifest import analysis_fingerprint
+
+METRICS_VERSION = 2
+RETRY_AFTER_TOLERANCE_S = 0.05  # timer and logging resolution; a request this early is not counted as a violation
 
 COHORTS = {"baseline": (60, 150), "fault": (150, 250), "post": (250, 550)}
 ROUTE_PATTERNS = [
@@ -97,8 +108,10 @@ def backend_frame(td: TrialData) -> pd.DataFrame:
             "attempt_id": r.get("attempt_id"), "route": route_template(r["method"], r["path"]),
             "status": r["http_status"], "total_ms": r.get("total_ms", r.get("handler_ms")), "db_ms": r["db_ms"],
             "queue_wait_ms": r.get("queue_wait_ms", 0.0), "gate": r.get("gate_decision", "admitted"),
+            "commit_ack_t": td.t(r["commit_ack_mono_ns"]) if r.get("commit_ack_mono_ns") else math.nan,
         })
-    cols = ["t", "actor", "goal_id", "attempt_id", "route", "status", "total_ms", "db_ms", "queue_wait_ms", "gate"]
+    cols = ["t", "actor", "goal_id", "attempt_id", "route", "status", "total_ms", "db_ms", "queue_wait_ms", "gate",
+            "commit_ack_t"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -130,9 +143,11 @@ def goals_frame(td: TrialData) -> pd.DataFrame:
         rec = goals.setdefault(v["goal_id"], {"goal_id": v["goal_id"]})
         rec["verdict"] = v["verdict"]
         rec["oracle_end_reason"] = v.get("end_reason")
-        rec["t_commit"] = td.t_wall(v["completed_at"]) if v.get("completed_at") else math.nan
+        # INSERT time of the goal's change (named `completed_at` in bundles written before 2026-10-28; same value).
+        ins = v.get("change_inserted_at") or v.get("completed_at")
+        rec["t_change_insert"] = td.t_wall(ins) if ins else math.nan
     df = pd.DataFrame(list(goals.values()))
-    for c in ("t_sched", "t_commit", "verdict", "kind", "expected"):
+    for c in ("goal_id", "t_sched", "t_change_insert", "verdict", "kind", "expected"):
         if c not in df:
             df[c] = math.nan
     return df.sort_values("t_sched").reset_index(drop=True)
@@ -145,11 +160,13 @@ def cohort_of(t: float) -> str | None:
     return None
 
 
-def analyze(trial_dir: str | Path) -> dict:
+def analyze(trial_dir: str | Path, out_dir: str | Path | None = None) -> dict:
+    """Analyze one bundle. Derived files go to `out_dir` (default: the bundle itself, as during a trial). Re-analysis
+    of a saved bundle writes elsewhere so the recorded evidence is never overwritten."""
     td = TrialData(trial_dir)
     m = td.manifest
     meta = td.meta
-    out_dir = td.dir
+    out_dir = Path(out_dir) if out_dir is not None else td.dir
     be = backend_frame(td)
     samples = samples_frame(td)
     goals = goals_frame(td)
@@ -190,7 +207,14 @@ def analyze(trial_dir: str | Path) -> dict:
     n_sched = len(goals)
     verdicts = goals.verdict.value_counts().to_dict() if n_sched else {}
     n_correct = int(verdicts.get("correct", 0))
-    goals["latency_s"] = goals.t_commit - goals.t_sched
+    # Completion time: the backend's commit acknowledgment where the bundle has it (backend logs from 2026-10-28),
+    # else the change's INSERT time, which precedes COMMIT by one DB round trip. The basis is reported.
+    acks = be[be.commit_ack_t.notna() & be.goal_id.notna()].groupby("goal_id").commit_ack_t.min() if len(be) else (
+        pd.Series(dtype=float))
+    goals["t_commit_ack"] = goals.goal_id.map(acks)
+    has_ack = bool(goals.t_commit_ack.notna().any())
+    completion_basis = "commit_ack" if has_ack else "change_insert"
+    goals["latency_s"] = (goals.t_commit_ack if has_ack else goals.t_change_insert) - goals.t_sched
     goals["cohort"] = goals.t_sched.map(cohort_of)
 
     def completion(tau: float) -> float:
@@ -322,6 +346,9 @@ def analyze(trial_dir: str | Path) -> dict:
     if clock["n"] and clock["outside_share"] > 0.01:
         invalid.append(f"clock check: {clock['outside_share']:.1%} of backend records outside their client attempt")
 
+    exposure_res = exposure(be, {"baseline": baseline, "fault": (t_on, t_off), "post60": (t_off, t_off + 60)})
+    backpressure_res = backpressure(td)
+
     status = "invalid" if invalid else ("inconclusive" if inconclusive else "valid")
     if meta.get("final_state") == "CANCELLED":
         status = "cancelled"
@@ -329,7 +356,9 @@ def analyze(trial_dir: str | Path) -> dict:
     result = {
         "trial_id": meta["trial_id"], "experiment_id": meta["experiment_id"], "condition": meta["condition"],
         "gate": meta["gate"], "repeat": meta.get("repeat"), "block": meta.get("block"), "label": meta.get("label"),
-        "config_hash": meta["config_hash"], "final_state": meta.get("final_state"), "status": status,
+        "config_hash": meta["config_hash"], "compat_fingerprint": meta.get("compat_fingerprint", meta["config_hash"]),
+        "analysis_fingerprint": analysis_fingerprint(), "metrics_version": METRICS_VERSION,
+        "final_state": meta.get("final_state"), "status": status,
         "invalid_reasons": invalid, "inconclusive_reasons": inconclusive,
         "fault": {"t_on": t_on, "t_off": t_off, "enabled": m.get("fault_enabled", True),
                   "latency_ms": m["fault"]["latency_ms"], "duration_s": m["fault"]["duration_s"],
@@ -339,7 +368,7 @@ def analyze(trial_dir: str | Path) -> dict:
         "background": {"rate_rps": rate, "lost_service_D": d_total,
                        "baseline_success": refs.b_s, "baseline_p95_ms": refs.b_p95, "requests": len(bg)},
         "goals": {"scheduled": n_sched, "verdicts": verdicts, "success_S": n_correct / n_sched if n_sched else None,
-                  "F_60s": completion(60), "F_180s": completion(180)},
+                  "F_60s": completion(60), "F_180s": completion(180), "completion_basis": completion_basis},
         "cohorts": cohorts.to_dict(orient="records"),
         "useful_service": useful,
         "retries": {"transport_retries_agent": transport_retries_agent, "scripted_retries": scripted_retries,
@@ -348,11 +377,15 @@ def analyze(trial_dir: str | Path) -> dict:
         "agent_step_s_p50": float(np.median(step_gaps)) if step_gaps else None,
         "gate_stats": {"decisions": gate_counts, "baseline_rejection_share": baseline_rejections},
         "db_time": db,
+        "db_time_definition": "summed DB round-trip elapsed ms per request (includes proxy latency; not DB CPU)",
+        "exposure": exposure_res,
+        "backpressure": backpressure_res,
         "runner": runner,
         "clock_check": clock,
     }
     result = clean(result)
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     series.to_csv(out_dir / "per_second.csv", index=False)
     goals.to_csv(out_dir / "goals.csv", index=False)
     cohorts.to_csv(out_dir / "cohorts.csv", index=False)
@@ -376,3 +409,88 @@ def clock_check(td: TrialData, be: pd.DataFrame) -> dict:
         if not (sent - 0.005 <= tb <= recv + 0.005):
             outside += 1
     return {"n": n, "outside": outside, "outside_share": outside / n if n else 0.0}
+
+
+def exposure(be: pd.DataFrame, windows: dict[str, tuple[float, float]]) -> dict:
+    """Who occupied the API in each window: in-flight seconds and DB round-trip ms that overlap the window, for goal
+    clients (any request carrying a goal ID) and background clients. A request's DB ms is spread evenly over its
+    duration. This is occupancy, not causation (audit finding 9: goals were under 1% of healthy DB time)."""
+    out = {}
+    if not len(be):
+        return out
+    s = be.t.to_numpy(dtype=float)
+    dur = be.total_ms.fillna(0).to_numpy(dtype=float) / 1000
+    e = s + dur
+    db = be.db_ms.fillna(0).to_numpy(dtype=float)
+    goal = be.goal_id.notna().to_numpy()
+    bgm = (be.actor == "background").to_numpy()
+    rejected = (be.gate == "rejected").to_numpy()
+    for name, (a, b) in windows.items():
+        if a is None or b is None or b <= a:
+            continue
+        ov = np.clip(np.minimum(e, b) - np.maximum(s, a), 0, None)
+        started = (s >= a) & (s < b)
+        frac = np.where(dur > 0, ov / np.where(dur > 0, dur, 1.0), started.astype(float))
+        dbw = db * frac
+        g_in, b_in = float(ov[goal].sum()), float(ov[bgm].sum())
+        g_db, b_db = float(dbw[goal].sum()), float(dbw[bgm].sum())
+        out[name] = {
+            "window_s": [round(a, 3), round(b, 3)],
+            "goal_inflight_s": round(g_in, 2), "background_inflight_s": round(b_in, 2),
+            "goal_db_ms": round(g_db, 1), "background_db_ms": round(b_db, 1),
+            "goal_share_inflight": g_in / (g_in + b_in) if g_in + b_in else None,
+            "goal_share_db": g_db / (g_db + b_db) if g_db + b_db else None,
+            "goal_requests_started": int((started & goal).sum()),
+            "goal_requests_rejected": int((started & goal & rejected).sum()),
+            "background_requests_rejected": int((started & bgm & rejected).sum()),
+        }
+    return out
+
+
+def backpressure(td: TrialData, tolerance_s: float = RETRY_AFTER_TOLERANCE_S, max_witnesses: int = 25) -> dict:
+    """Retry-After compliance per goal (RFC 9110 section 10.2.3: how long the client ought to wait). After a 429 or
+    503 that carried Retry-After, the goal's next HTTP attempt is a violation if it was sent earlier than that.
+    Each witness joins the refused attempt, the next attempt and the model call that chose it."""
+    att: dict[str, list[tuple]] = {}
+    for e in td.client:
+        if e.get("event_type") != "http.attempt" or not e.get("goal_id"):
+            continue
+        recv = td.t(e["ts_mono_ns"])
+        sent = recv - (e.get("latency_ms") or 0) / 1000
+        att.setdefault(e["goal_id"], []).append((sent, recv, e.get("http_status"), e.get("retry_after_s"),
+                                                  e.get("tool"), e.get("attempt_id"), e.get("model_call_id"),
+                                                  e.get("actor_kind")))
+    n_signal = n_followed = n_viol = 0
+    viol_goals: set[str] = set()
+    witnesses, gaps, max_burst = [], [], 0
+    for g, a in att.items():
+        a.sort()
+        for i, (_s, recv, st, ra, tool, aid, _mc, _k) in enumerate(a):
+            if st in (429, 503) and ra is not None:
+                n_signal += 1
+                if i + 1 < len(a):
+                    n_followed += 1
+                    nxt = a[i + 1]
+                    gap = nxt[0] - recv
+                    gaps.append(gap)
+                    if gap < ra - tolerance_s:
+                        n_viol += 1
+                        viol_goals.add(g)
+                        if len(witnesses) < max_witnesses:
+                            witnesses.append({"goal_id": g, "refused_attempt_id": aid, "refused_tool": tool,
+                                              "t_refused": round(recv, 3), "retry_after_s": ra,
+                                              "next_attempt_id": nxt[5], "next_tool": nxt[4],
+                                              "next_model_call_id": nxt[6], "gap_s": round(gap, 3)})
+        sends = [x[0] for x in a]
+        j = 0
+        for i in range(len(sends)):
+            while sends[i] - sends[j] > 10:
+                j += 1
+            max_burst = max(max_burst, i - j + 1)
+    return {
+        "signals": n_signal, "followed_by_attempt": n_followed, "violations": n_viol,
+        "violation_share": n_viol / n_followed if n_followed else None,
+        "goals_with_violation": len(viol_goals), "tolerance_s": tolerance_s,
+        "gap_s_p50": float(np.median(gaps)) if gaps else None,
+        "max_attempts_one_goal_10s": max_burst, "witnesses": witnesses,
+    }

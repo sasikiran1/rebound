@@ -296,9 +296,135 @@ Projected total about $37, under the $100 gate; no reductions needed.
   within 5%). Runner-up 8 tokens / 1.5 s. Both get one exploratory agent gate-on trial for the recovery tie-break.
 - During the fault the gate rejected about 5,000 requests (503 + Retry-After 2) and queued about 1,400.
 
+### Host disk full (tr_0009, tr_0010) — kept, both INVALID
+
+The Windows C: drive (which holds the WSL and Docker virtual disks) reached 0 bytes free during the two exploratory
+agent gate-on trials. WSL then returned I/O errors for every command and Docker Desktop stopped responding.
+- tr_0009 (gate 12 tokens / 1.5 s): INVALID by the baseline guard ("baseline unhealthy": background p95 18.5 ms vs
+  the 13.35 ms limit, success 99.63%), most likely from the filling disk. Files intact; $0.78 model spend.
+- tr_0010 (gate 8 tokens / 1.5 s): the runner died in OBSERVING; no oracle, analysis or checksums. Marked INVALID
+  with `python -m harness mark-crashed` (all files kept); $1.80 model spend from its model_calls.jsonl.
+- After the user freed space (330 GB free), WSL and Docker were restarted and both trials re-run. Preflight now
+  requires ≥ 10 GB free on both `/` and the host drive (`/mnt/c`).
+
+Model spend to this point: $2.37 (Day 1 + tr_0002) + $0.78 + $1.80 = $4.95.
+
+### Agent gate-on re-runs (tr_0011, tr_0012) — kept, both INCONCLUSIVE (provider)
+
+| Trial | Gate | T_rec | D | correct / provider_failed | Baseline bg p95 | Baseline rejections | Model $ |
+|---|---|---|---|---|---|---|---|
+| tr_0002 | off | 20 s | 7,733 | 228 / 0 | 7.66 ms | 0 | 2.36 |
+| tr_0011 | 12 tokens, 1.5 s | 10 s | 5,015 | 213 / 15 | 7.66 ms | 0.06% | 2.20 |
+| tr_0012 | 8 tokens, 1.5 s | 10 s | 5,092 | 214 / 14 | 6.91 ms | 0 | 2.22 |
+
+Both are inconclusive under the frozen rule (> 5% of goals `provider_failed`). Every provider failure (36 and 43
+calls) was HTTP 400 "invalid_request_error referenced response not found or expired". They were spread over the
+whole trial (32 s to 555 s), not tied to the fault. Each failing continuation referenced a response created only
+0.8–3.6 s earlier (median 1.4–1.6 s), i.e. on turns 3–5 right after a tool call that took milliseconds; successful
+continuations referenced responses with a median age of 9.3 s (up to 47 s). So this is a read-after-write race in
+the provider's response store, not expiry. It did not occur on Day 1 or in tr_0002 earlier the same day.
+
+**Contradiction with the design (provider table: 400 → no retry), changed:** the provider wrapper now
+treats this one 400 like a 503: up to 3 retries after fixed waits of 1, 2 and 4 s, recorded as provider retries and
+provider wait. Any other 400 still ends the goal as `provider_failed`. This is a model-provider retry, not a
+transport retry to FieldDesk, so rule 2 still holds.
+
+**tr_0013 (gate 12 / 1.5 s, with that retry): still INCONCLUSIVE.** 18/228 goals `provider_failed` (36 failed
+calls, 148 provider retries); every failing call had used all three retries, so the referenced responses were never
+found, not merely late. Recovery `slow` (T_rec 69 s; 18 unhealthy seconds), D 5,137, 210 correct, $2.19.
+What the lost responses have in common: none of 230 turn-2 continuations (which reference the goal's first response,
+itself not a continuation) failed; every lost reference pointed at a response that was itself created with a
+`previous_response_id` (turns 3–6), across all tools and response shapes. About 3% of such references failed.
+
+**Contradiction with the design ("continue each goal's conversation with previous_response_id"),
+changed:** continuation is now a manifest setting, and exploration from tr_0014 on uses `full_history`: every model
+call carries the goal's whole conversation from the runner's own records (user message, the model's visible text
+and function calls, the tool outputs), with `store=False`; hidden reasoning items are not carried over. Checked
+with two calls first: accepted, caching still applies (497 of 673 input tokens cached on the second call), $0.002.
+Input tokens were already reported per call for the whole conversation, so cost should not change. The
+not-yet-stored retry stays in the wrapper but cannot trigger without stored responses.
+
+**tr_0014 (full_history, gate 12 / 1.5 s): valid.** 0 provider failures, 0 provider retries. T_rec 10 s (`fast`),
+D 5,059, 227/228 correct (1 `failed`), baseline rejections 0.16%, $2.50 ($0.0109 per goal; 1,215 calls,
+3.78 M input tokens of which 2.72 M cached).
+
+**New measured fact that changes the calibration (decision needed before the freeze):** with `store=False` the
+provider's latency fell from a p50 of about 9.7 s per call (all `previous_response_id` trials) to **0.75 s**.
+
+| | tr_0002 (stored, gate off) | tr_0003 (scripted, 10.25 s think) | tr_0014 (full_history, gate on) |
+|---|---|---|---|
+| Model latency p50 | 9.74 s | – | 0.75 s |
+| Agents' median healthy step | 10.25 s | – | 0.77 s |
+| Goal duration p50 / p90 | 42.4 / 53.9 s | 41.0 / 41.1 s | 3.9 / 5.0 s |
+| Active goals, 60–550 s: mean / max | 17.7 / 24 | 16.4 / 24 | **1.7 / 11** |
+| Fault cohort: attempts per goal, DB ms per goal | 4.45, 37.4 | 4.19, 33.3 | 5.88, 81.9 |
+| Fault cohort reactions | 11 same-call, 2 switch, 3 other | 1 switch, 2 other | 45 same-call, 6 switch, 26 other |
+
+At 0.4 goals/s only about 2 agents are active at once, against the design's 8–16 target, and the frozen scripted
+think time (10.25 s) no longer matches agent pacing. Fast agents also react much more to the fault per goal (5.88
+attempts vs 4.45; 2.2× the DB time). The freeze is on hold until the pacing and arrival rate are decided.
+
+Gate choice for the freeze, by the section 7a rule: **12 tokens, queue max 24, queue wait 1.5 s** (smallest scripted
+healthy-period overhead, +1.9%). In the agent trials both candidates gave the same recovery (T_rec 10 s vs 20 s with
+the gate off) and nearly the same D (5,015 vs 5,092), so the agent tie-break did not change the choice.
+
 ### Replay mechanics test (tr_0008)
 
 Replay of tr_0002's agent trace (which includes that trial's fault reactions; mechanics only, not a control):
 valid, 228/228 correct, 940 requests replayed open-loop, attempts per goal in the fault cohort 4.45 (identical to
 the source trace), T_rec 21 s, D 8,428.
 
+
+## Audit verification (Wed Oct 28, 00:00 ET; branch `audit-fixes`, no model spend, no new trials)
+
+External audit of HEAD 5694a04 (2026-10-27) checked against the code and the saved bundles. Baseline before any edit:
+77 tests passed, ruff clean, no `sleep` in `backend/`, clean tree, 21 commits.
+
+### Findings confirmed and fixed or bounded
+
+| Finding | Status | Measured evidence |
+|---|---|---|
+| full_history drops reasoning context | Confirmed (agent.py visible-text-only replay); new `stateless_reasoning` mode | unit tests only; needs a live smoke check |
+| Summary pools configurations | Confirmed: the old summary pooled four gate settings (tr_0004–07) into one cell, put tr_0001 (think 10.1 s) and tr_0003 (10.25 s) together, and paired tr_0002 (stored, gate off) with tr_0014 (full_history, gate on) as an acceptance pair that passed c3 and c4 | the 9 valid explore-v1 trials span 8 configuration hashes; the new summary refuses to judge |
+| Checksum failure still yields a report | Confirmed; now fails closed | one flipped word in tr_0002's `oracle.jsonl` → INTEGRITY FAILURE, exit 1, nothing written |
+| Provenance omits oracle, schema, generator, lockfile | Confirmed; config_hash v2 covers them, analyzer has its own fingerprint | regression test |
+| Missing baseline passes c1; no c5 | Confirmed; five explicit pass/fail/insufficient verdicts | regression tests |
+| `applied_at` labeled commit time | Confirmed but bounded: it is `clock_timestamp()` of the INSERT, one round trip before COMMIT (about 400 ms in the fault). Renamed `change_inserted_at`; FieldDesk now logs commit acknowledgment | – |
+| Scripted v1 is a weak baseline | Confirmed: abandons after the first read fails 3 times (7 and 5 goals lost in tr_0001, tr_0003). New `robust_v2` | unit tests |
+| Replay overclaimed | Confirmed (tr_0008 replays a faulted trace). Replay now checks its reference; explore_replay marked mechanics-only | – |
+| Goals barely load the API | Confirmed for the fault window itself (below) | – |
+| DB ms is not DB work | Confirmed; relabeled "DB round-trip elapsed ms" | – |
+
+### Re-analysis of saved bundles (key-free, `make verify RUN=runs/explore-v1`)
+
+13 of 14 bundles pass their raw checksums and reproduce every saved version 1 result exactly (status, T_rec,
+recovery verdict, unhealthy seconds, goal verdicts, S, D, background references, retry classes, model cost, gate
+decisions). tr_0010 (runner crashed, already INVALID) cannot be analyzed: its last JSONL line is truncated.
+
+### Fault-window exposure (who held the API, metrics_version 2)
+
+| Trial | Client, gate | Goal share of in-flight time, fault | Goal share of DB round-trip ms, fault | Goal requests in the fault (refused) |
+|---|---|---|---|---|
+| tr_0001 / tr_0003 | scripted v1, off | 0.33% / 0.30% | 0.13% / 0.11% | 25 / 23 |
+| tr_0002 | agent stored, off | 0.31% | 0.09% | 15 |
+| tr_0004–tr_0007 | scripted v1, on | 0–0.44% | 0–0.02% | 30 (30) in tr_0007 |
+| tr_0011–tr_0013 | agent stored, on (inconclusive) | 0–0.88% | 0% | 14–18 (all refused) |
+| tr_0014 | agent full_history, on | 1.70% | 2.70% | 82 (80) |
+
+Background traffic held at least 98% of the API's in-flight time during every fault. At this load no goal client can
+move recovery much; T_rec and D differences between client conditions are not attributable to the clients.
+
+### Back-pressure (Retry-After) compliance, new
+
+| Trials | Client | Too-early requests after a Retry-After refusal | Median gap |
+|---|---|---|---|
+| tr_0004–tr_0007 | scripted v1 | 0 of 97 | 2.0 s |
+| tr_0011–tr_0013 | agent, previous_response_id | 0 of 50 | 8.6–9.0 s |
+| tr_0014 | agent, full_history | 84 of 84 (10 goals) | 0.77 s |
+
+Slow agents complied only because a model call took longer than Retry-After. The tool interface has no way to wait.
+Witness g_0083 (tr_0014): 12 refusals in 9.4 s, five calls to the expensive search, tool budget exhausted, oracle
+`failed`. These are exploratory observations from one trial under the old context mode; `docs/screening_v2.md`
+predeclares the test that can confirm or refute them.
+
+Tests after the changes: 115 passed (38 new), ruff clean, no-sleep check clean.

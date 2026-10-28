@@ -18,8 +18,8 @@ windows:
   drain_deadline_s: 240
 fault: {kind: latency, proxy: pg, direction: downstream, latency_ms: 400, jitter_ms: 50, start_s: 180, duration_s: 10}
 gate: {tokens: 12, queue_max: 24, queue_wait_ms: 1500, retry_after_s: 2}
-model: {id: muse-spark-1.3, api: responses, continuation: previous_response_id, reasoning_effort: low, max_output_tokens: 2048,
-  parallel_tool_calls: false, prompt_cache_key: rebound-agent-v1, prompt: prompts/agent_v1.md, tools: prompts/tools_v1.json}
+model: {id: muse-spark-1.3, api: responses, continuation: full_history, reasoning_effort: low, max_output_tokens: 2048, parallel_tool_calls: false,
+  prompt_cache_key: rebound-agent-v1, prompt: prompts/agent_v1.md, tools: prompts/tools_v1.json}
 scripted: {think_time_s: 10.25}
 limits: {model_calls_per_goal: 16, tool_calls_per_goal: 14, goal_deadline_s: 240, input_tokens_per_goal: 80000, max_concurrent_goals: 24,
   trial_budget_usd: 10}

@@ -8,7 +8,7 @@ PY := taskset -c $(RUNNER_CPUS) uv run python
 MANIFEST ?= manifests/frozen/eval_v1.yaml
 
 .PHONY: sut-up sut-down seed tasks clone reset preflight pulse endpoints calibrate verify-model goal trial \
-	analyze report bundle test lint no-sleep check
+	analyze verify report bundle test lint no-sleep check
 
 sut-up:
 	mkdir -p var/fielddesk
@@ -46,10 +46,11 @@ calibrate:
 	$(PY) -m harness step-test --manifest manifests/exploratory/explore_v1.yaml
 
 verify-model:
-	$(PY) -m harness verify-model $(if $(MODEL),--model $(MODEL))
+	$(PY) -m harness verify-model $(if $(MODEL),--model $(MODEL)) $(if $(CONTINUATION),--continuation $(CONTINUATION))
 
 goal: reset
-	$(PY) -m harness goal $(if $(TASK),--task $(TASK)) $(if $(MODEL),--model $(MODEL))
+	$(PY) -m harness goal $(if $(TASK),--task $(TASK)) $(if $(MODEL),--model $(MODEL)) \
+		$(if $(CONTINUATION),--continuation $(CONTINUATION))
 
 # make trial CONDITION=agent GATE=off [MANIFEST=...] [REPEAT=1] [BLOCK=1]
 trial:
@@ -59,6 +60,10 @@ trial:
 # Re-analysis needs no model key and no running containers: it reads only the trial bundles.
 analyze:
 	uv run python -m harness analyze $(RUN)
+
+# Key-free check of saved evidence: raw checksums, then re-analysis must reproduce every saved version 1 result.
+verify:
+	uv run python -m harness analyze --strict $(RUN)
 
 report:
 	uv run python -m analysis.experiment_report $(RUN)

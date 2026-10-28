@@ -1,8 +1,10 @@
 """Experiment manifests: YAML -> validated pydantic model -> resolved manifest + config hash.
 
 `config_hash` = SHA-256 over the resolved manifest, the prompt file, the tool schemas, the model settings, the
-image digests and the data checksum. Per-trial fields (condition, gate, repeat, seed order) are not part of the
-configuration; they are recorded next to it.
+image digests, the data checksum and the code that runs or judges a trial (runner, backend, oracle, schema, generator,
+lockfile, container definitions). Per-trial fields (condition, gate, repeat, seed order) are not part of the
+configuration; they are recorded next to it. `compat_fingerprint` drops only the declared treatment fields (fault
+duration, fault on/off) so paired comparisons can be checked; `analysis_fingerprint` identifies the analyzer.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -90,7 +93,10 @@ class GateCfg(Strict):
 class Model(Strict):
     id: str = "muse-spark-1.3"
     api: str = "responses"
-    continuation: str = "previous_response_id"
+    # previous_response_id: provider-stored conversation. full_history: the runner resends visible messages and
+    # function calls only (no reasoning items; kept for the historical explore-v1 trials). stateless_reasoning: the
+    # runner resends every output item verbatim, including encrypted reasoning, with store=False (audit finding 1).
+    continuation: Literal["previous_response_id", "full_history", "stateless_reasoning"] = "previous_response_id"
     reasoning_effort: str = "low"
     max_output_tokens: int = 2048
     parallel_tool_calls: bool = False
@@ -100,13 +106,28 @@ class Model(Strict):
 
 
 class Scripted(Strict):
-    think_time_s: float
+    # v1: the original policy (gives up after a first read fails its retries). robust_v2: deadline-aware, keeps
+    # retrying with capped full-jitter backoff and Retry-After, re-reads after an uncertain write (audit finding 7).
+    policy: Literal["v1", "robust_v2"] = "v1"
+    think_time_s: float  # 0 = unpaced
+    # robust_v2 only: draw each think time from the baseline-cohort step gaps of a recorded healthy agent trial
+    # (runs/<exp>/<trial>/client.jsonl), matching the whole delay distribution rather than its median.
+    think_samples_from: str | None = None
     max_retries: int = 2
     backoff_base_s: float = 0.5
     backoff_cap_s: float = 8.0
     retry_after_cap_s: float = 30.0
     request_budget: int = 20
     seed: int = 13
+
+
+class AgentRuntime(Strict):
+    """What the runtime around the model does, independent of the model's decisions. A separate treatment arm."""
+
+    # Hold the goal's next HTTP attempt until the Retry-After of its last 503/429 has passed (capped). The model
+    # still decides whether and what to call next; the runtime only enforces the server's back-pressure signal.
+    retry_after_guard: bool = False
+    retry_after_guard_cap_s: float = 10.0
 
 
 class Limits(Strict):
@@ -138,10 +159,13 @@ class Manifest(Strict):
     fault_enabled: bool = True
     gate: GateCfg = GateCfg()
     model: Model = Model()
+    agent_runtime: AgentRuntime = AgentRuntime()
     scripted: Scripted
     limits: Limits = Limits()
     calibration: Calibration
     replay_trace: str | None = None  # runs/<exp>/<trial>/client.jsonl of the healthy reference trial
+    # A faulted or otherwise unsuitable trace may be replayed only as a labeled mechanics test, never as a control.
+    replay_mechanics_only: bool = False
 
     @property
     def observe_end_s(self) -> float:
@@ -203,13 +227,35 @@ def _tree_hash(rel: str) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def config_hash(resolved: dict) -> str:
-    """Hash over the resolved manifest + prompt + tool schemas + model settings + images + data checksum.
-    `backend.repo_sha` is excluded (a docs-only commit must not create a new configuration); code that changes
-    behavior is covered by the backend tree hash, the prompt, the tool schemas and the harness tree hash."""
+def _files_hash(rels: list[str]) -> str:
+    """Content hash of files and directories (all files below a directory), missing paths recorded as missing."""
+    h = hashlib.sha256()
+    for rel in rels:
+        p = ROOT / rel
+        files = sorted(x for x in p.rglob("*") if x.is_file() and "__pycache__" not in x.parts) if p.is_dir() else [p]
+        for f in files:
+            h.update(str(f.relative_to(ROOT)).encode())
+            h.update(f.read_bytes() if f.exists() else b"<missing>")
+    return "sha256:" + h.hexdigest()
+
+
+# Code and inputs that decide what a trial does or how its goals are judged at run time. A change to any of them
+# is a new configuration (audit 2026-10-27, finding 4: the oracle, schema, generator and lockfile were not hashed).
+EXECUTION_INPUTS = ["oracle", "data/schema.sql", "data/indexes.sql", "data/generator", "uv.lock", "docker"]
+# Rules applied after the trial (analysis, recovery definition, acceptance). Recorded per analysis run in
+# verdict.json as `analysis_fingerprint`; never pool verdicts produced by different analyzers.
+ANALYSIS_INPUTS = ["analysis", "docs/protocol.md"]
+# Per-trial treatment values that a paired comparison may vary on purpose. Everything else must match.
+TREATMENT_FIELDS = (("fault", "duration_s"), ("fault_enabled",), ("agent_runtime", "retry_after_guard"),
+                    ("scripted", "think_time_s"), ("scripted", "think_samples_from"))
+CONFIG_HASH_VERSION = 2
+
+
+def _identity_parts(resolved: dict) -> dict:
     m = json.loads(json.dumps(resolved))
     m.get("backend", {}).pop("repo_sha", None)
-    parts = {
+    return {
+        "config_hash_version": CONFIG_HASH_VERSION,
         "manifest": m,
         "prompt": sha256_file(resolved["model"]["prompt"]),
         "tools": sha256_file(resolved["model"]["tools"]),
@@ -218,5 +264,28 @@ def config_hash(resolved: dict) -> str:
         "data": resolved["data"]["checksum"],
         "tasks": resolved["tasks"]["sha256"],
         "harness_code": _tree_hash("harness"),
+        "execution_inputs": _files_hash(EXECUTION_INPUTS),
     }
-    return "sha256:" + hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+
+
+def config_hash(resolved: dict) -> str:
+    """Hash over the resolved manifest + prompt + tool schemas + model settings + images + data checksum + runner,
+    oracle, schema, generator, lockfile and container definitions. `backend.repo_sha` is excluded (a docs-only commit
+    must not create a new configuration); backend code is covered by the resolved backend tree hash."""
+    return "sha256:" + hashlib.sha256(json.dumps(_identity_parts(resolved), sort_keys=True).encode()).hexdigest()
+
+
+def compat_fingerprint(resolved: dict) -> str:
+    """Identity for paired comparisons: the configuration hash with only the declared treatment fields removed.
+    Two trials may be compared or pooled only if their fingerprints are equal."""
+    m = json.loads(json.dumps(resolved))
+    for path in TREATMENT_FIELDS:
+        node = m
+        for key in path[:-1]:
+            node = node.get(key, {})
+        node.pop(path[-1], None)
+    return "sha256:" + hashlib.sha256(json.dumps(_identity_parts(m), sort_keys=True).encode()).hexdigest()
+
+
+def analysis_fingerprint() -> str:
+    return _files_hash(ANALYSIS_INPUTS)
