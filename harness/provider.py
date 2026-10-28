@@ -31,9 +31,11 @@ BACKOFF_CAP_S = 30.0
 RETRY_AFTER_CAP_S = 60.0
 
 # USD per 1M tokens: (uncached input, cached input, output incl. reasoning). the design.
+# Contributor tier (Meta may train on prompts; lower rate limit): $0.10 / $0.002 / $0.20 per 1M, per Meta's pricing page
+# as cited in the 2026-10-27 audit and LiteLLM's Muse Spark 1.3 launch note. It was priced as Standard before.
 PRICES = {
     "muse-spark-1.3": (1.25, 0.15, 4.25),
-    "muse-spark-1.3-contributor": (1.25, 0.15, 4.25),
+    "muse-spark-1.3-contributor": (0.10, 0.002, 0.20),
     "muse-wonder-1.0": (4.00, 0.20, 20.00),
 }
 
