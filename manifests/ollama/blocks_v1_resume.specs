@@ -1,0 +1,19 @@
+# Resume after the host crash of 2026-10-28 11:13:43 EDT (Kernel-Power 41), declared before any resumed trial.
+# Blocks 2 and 3 exactly as in blocks_v1.specs. Block 2 starts with gemma4-D, the arm lost in tr_0007 (crashed in
+# BASELINE). Then one rerun of the block-1 arm invalidated by the crash (tr_0006 bg-B). Originals are kept.
+# block 2 (shuffle seed 20261030)
+manifests/ollama/recovery_gemma4_B.yaml agent on 2 gemma4-D
+manifests/ollama/recovery_gemma4_B.yaml agent off 2 gemma4-A --no-fault
+manifests/ollama/recovery_gemma4_B.yaml background on 2 bg-D
+manifests/ollama/recovery_gemma4_B.yaml agent on 2 gemma4-C --no-fault
+manifests/ollama/recovery_gemma4_B.yaml agent off 2 gemma4-B
+manifests/ollama/recovery_gemma4_B.yaml background off 2 bg-B
+# block 3 (shuffle seed 20261031)
+manifests/ollama/recovery_gemma4_B.yaml background off 3 bg-B
+manifests/ollama/recovery_gemma4_B.yaml background on 3 bg-D
+manifests/ollama/recovery_gemma4_B.yaml agent off 3 gemma4-A --no-fault
+manifests/ollama/recovery_gemma4_B.yaml agent on 3 gemma4-D
+manifests/ollama/recovery_gemma4_B.yaml agent off 3 gemma4-B
+manifests/ollama/recovery_gemma4_B.yaml agent on 3 gemma4-C --no-fault
+# rerun of the crash-invalidated block-1 arm
+manifests/ollama/recovery_gemma4_B.yaml background off 1 bg-B

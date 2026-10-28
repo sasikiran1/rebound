@@ -1,0 +1,3 @@
+{"runs": [{"models": ["qwen3.5-9b-16k:latest"],
+           "settings": [{"name": "orig", "options": {"temperature": 0, "seed": 41, "num_ctx": 8192}, "num_predict": 1536, "think": false}],
+           "cases": ["FULL_A", "LATE_A"]}]}

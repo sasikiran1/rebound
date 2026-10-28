@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -18,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from fielddesk.db import current_stats, db
+from fielddesk.db import db
 from fielddesk.gate import Gate, GateMiddleware
 from fielddesk.requestlog import RequestLogMiddleware, counters
 from fielddesk.sampler import Sampler
@@ -136,8 +135,16 @@ async def get_appointment(appointment_id: int):
     return appointment_json(row)
 
 
+def in_window(starts_at: dt.datetime, start_after: dt.time | None, start_before: dt.time | None) -> bool:
+    t = starts_at.time()
+    return (start_after is None or t >= start_after) and (start_before is None or t < start_before)
+
+
 @app.get("/availability")
-async def day_availability(region: str, date: dt.date, service: str):
+async def day_availability(region: str, date: dt.date, service: str, start_after: dt.time | None = None,
+                           start_before: dt.time | None = None, offset: Annotated[int, Query(ge=0)] = 0):
+    """`start_after`, `start_before` (local HH:MM) and `offset` are optional (tool set v2). They filter and page the
+    same query's rows; with none of them the response is exactly the v1 response."""
     async with db.acquire() as conn:
         ids = await conn.fetchrow(
             "SELECT (SELECT id FROM regions WHERE code = $1) AS region_id, "
@@ -159,12 +166,24 @@ async def day_availability(region: str, date: dt.date, service: str):
             """,
             ids["region_id"], ids["skill_id"], date,
         )
+    if start_after is None and start_before is None and offset == 0:
+        return {
+            "region": region,
+            "date": date.isoformat(),
+            "service": service,
+            "count": len(rows),
+            "slots": [slot_json(r) for r in rows],
+        }
+    rows = [r for r in rows if in_window(r["starts_at"], start_after, start_before)]
     return {
         "region": region,
         "date": date.isoformat(),
         "service": service,
+        "start_after": start_after and start_after.isoformat("minutes"),
+        "start_before": start_before and start_before.isoformat("minutes"),
         "count": len(rows),
-        "slots": [slot_json(r) for r in rows],
+        "offset": offset,
+        "slots": [slot_json(r) for r in rows[offset:]],
     }
 
 
@@ -178,9 +197,13 @@ async def search_availability(
     date_from: Annotated[dt.date, Query(alias="from")],
     date_to: Annotated[dt.date, Query(alias="to")],
     regions: Annotated[str, Query(description="comma-separated region codes; the first one ranks by distance")],
+    start_after: dt.time | None = None,
+    start_before: dt.time | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
     """Open slots over a date range for technicians covering any of the regions, ranked by distance from the
-    first region. Multi-day, multi-region join: the expensive path."""
+    first region. Multi-day, multi-region join: the expensive path. Optional (tool set v2): `start_after`,
+    `start_before` (local HH:MM) filter by start time inside the query; `offset` pages past the first 50."""
     codes = list(dict.fromkeys(c.strip() for c in regions.split(",") if c.strip()))
     if not codes:
         raise ApiError(422, "invalid_regions", "at least one region code is required")
@@ -213,9 +236,38 @@ async def search_availability(
             GROUP BY s.id, s.slot_date, s.starts_at, s.technician_id, hr.code
             ORDER BY distance, s.slot_date, s.starts_at, s.technician_id
             LIMIT $6
+            """ if start_after is None and start_before is None and offset == 0 else """
+            SELECT s.id AS slot_id, s.slot_date, s.starts_at, s.technician_id, hr.code AS technician_home_region,
+                   min(rd.distance) AS distance, array_agg(DISTINCT r.code ORDER BY r.code) AS covers,
+                   count(*) OVER () AS total
+            FROM slots s
+            JOIN technician_skills ts ON ts.technician_id = s.technician_id AND ts.skill_id = $1
+            JOIN technician_regions tr ON tr.technician_id = s.technician_id AND tr.region_id = ANY($2::smallint[])
+            JOIN regions r ON r.id = tr.region_id
+            JOIN region_distances rd ON rd.from_region = $3 AND rd.to_region = tr.region_id
+            JOIN technicians t ON t.id = s.technician_id
+            JOIN regions hr ON hr.id = t.home_region
+            WHERE s.slot_date BETWEEN $4 AND $5
+              AND ($7::time IS NULL OR s.starts_at::time >= $7) AND ($8::time IS NULL OR s.starts_at::time < $8)
+              AND NOT EXISTS (
+                  SELECT 1 FROM appointments a WHERE a.slot_id = s.id AND a.status = 'scheduled')
+            GROUP BY s.id, s.slot_date, s.starts_at, s.technician_id, hr.code
+            ORDER BY distance, s.slot_date, s.starts_at, s.technician_id
+            LIMIT $6 OFFSET $9
             """,
-            ids["skill_id"], ids["region_ids"], ids["region_ids"][0], date_from, date_to, SEARCH_LIMIT,
+            *((ids["skill_id"], ids["region_ids"], ids["region_ids"][0], date_from, date_to, SEARCH_LIMIT)
+              + (() if start_after is None and start_before is None and offset == 0
+                 else (start_after, start_before, offset))),
         )
+    if start_after is not None or start_before is not None or offset:
+        return {
+            "service": service, "from": date_from.isoformat(), "to": date_to.isoformat(), "regions": codes,
+            "start_after": start_after and start_after.isoformat("minutes"),
+            "start_before": start_before and start_before.isoformat("minutes"),
+            "total_count": rows[0]["total"] if rows else 0, "offset": offset,
+            "slots": [{**slot_json(r), "technician_home_region": r["technician_home_region"],
+                       "distance": r["distance"], "covers_regions": list(r["covers"])} for r in rows],
+        }
     return {
         "service": service,
         "from": date_from.isoformat(),
@@ -348,11 +400,7 @@ async def reschedule(
                     "VALUES ($1, $2, $3, $4) RETURNING id, appointment_id, from_slot_id, to_slot_id, applied_at",
                     appointment_id, appt["slot_id"], body.slot_id, idempotency_key,
                 )
-            # The transaction block exited normally: COMMIT has returned. Logged even if the client already gave up.
-            stats = current_stats.get()
-            if stats is not None:
-                stats.commit_ack_mono_ns, stats.change_id = time.monotonic_ns(), change["id"]
-            return change_json(change, replayed=False)
+                return change_json(change, replayed=False)
     except asyncpg.UniqueViolationError as exc:
         if exc.constraint_name == SLOT_CONFLICT:
             raise ApiError(409, "slot_taken", f"slot {body.slot_id} is already booked") from exc

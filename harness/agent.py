@@ -29,10 +29,7 @@ class AgentConfig:
     goal_deadline_s: float = 240.0
     max_input_tokens: int = 80_000
     # previous_response_id: provider-stored conversation.
-    # full_history: every call carries the goal's visible conversation from the runner's own records, store=False;
-    #   reasoning items are dropped, so the model loses its own earlier reasoning (historical explore-v1 mode).
-    # stateless_reasoning: store=False with include=["reasoning.encrypted_content"]; every output item (reasoning,
-    #   message, function_call) is sent back verbatim and in order, then the tool outputs (audit finding 1).
+    # full_history: every call carries the goal's whole conversation from the runner's own records, store=False.
     # Exploration found the provider losing about 3% of stored responses deep in a chain (docs/results.md).
     continuation: str = "previous_response_id"
 
@@ -83,36 +80,6 @@ def _usage(response) -> dict:
     }
 
 
-def item_to_input(item) -> dict:
-    """An output item as an input item, verbatim: every field the provider returned except unset ones."""
-    if hasattr(item, "model_dump"):
-        return item.model_dump(exclude_none=True)
-    return {k: (item_to_input(v) if hasattr(v, "__dict__") else
-                [item_to_input(x) if hasattr(x, "__dict__") else x for x in v] if isinstance(v, list) else v)
-            for k, v in vars(item).items() if v is not None}
-
-
-def check_history(items: list[dict]) -> list[str]:
-    """Structural problems in a stateless conversation: every function_call needs exactly one later
-    function_call_output with its call_id, and no output may refer to an unknown call."""
-    problems, open_calls, seen = [], {}, set()
-    for i, it in enumerate(items):
-        t = it.get("type")
-        if t == "function_call":
-            if it.get("call_id") in open_calls or it.get("call_id") in seen:
-                problems.append(f"item {i}: duplicate call_id {it.get('call_id')}")
-            open_calls[it.get("call_id")] = i
-        elif t == "function_call_output":
-            cid = it.get("call_id")
-            if cid not in open_calls:
-                problems.append(f"item {i}: output for unknown or already answered call_id {cid}")
-            else:
-                del open_calls[cid]
-                seen.add(cid)
-    problems += [f"item {i}: call_id {c} has no output" for c, i in open_calls.items()]
-    return problems
-
-
 def _visible_text(response) -> str:
     parts = []
     for item in response.output:
@@ -134,7 +101,6 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
     t_start = time.monotonic()
 
     full_history = cfg.continuation == "full_history"
-    stateless = cfg.continuation == "stateless_reasoning"
 
     async def loop() -> None:
         next_input: list = [{"role": "user", "content": "Please handle the task."}]
@@ -152,13 +118,6 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
             if full_history:
                 history += next_input
                 call_input, continuation = list(history), {"store": False}
-            elif stateless:
-                history += next_input
-                problems = check_history(history)
-                if problems:  # a serialization bug: never send a malformed conversation to the provider
-                    raise RuntimeError(f"malformed stateless history for {scope.goal_id}: {problems}")
-                call_input = list(history)
-                continuation = {"store": False, "include": ["reasoning.encrypted_content"]}
             else:
                 call_input, continuation = next_input, {"previous_response_id": previous_id, "store": True}
             try:
@@ -186,11 +145,10 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
                 "model.call", **ids, model_call_id=mc_id, model=cfg.model, prompt_hash=prompt_hash,
                 tools_hash=tools_hash, **usage, cost_usd=round(call_cost, 6), latency_ms=round(res.latency_ms, 1),
                 status="ok", provider_retries=res.retries, provider_wait_s=res.wait_s, response_id=resp.id,
-                previous_response_id=None if (full_history or stateless) else previous_id,
-                continuation=cfg.continuation, input_items=len(call_input),
-                input_reasoning_items=sum(1 for i in call_input
-                                          if isinstance(i, dict) and i.get("type") == "reasoning"),
-                response_status=getattr(resp, "status", None),
+                previous_response_id=None if full_history else previous_id, continuation=cfg.continuation,
+                input_items=len(call_input), response_status=getattr(resp, "status", None),
+                done_reason=getattr(resp, "done_reason", None), context_used=getattr(resp, "context_used", None),
+                num_ctx=getattr(resp, "num_ctx", None), server_s=getattr(resp, "server_s", None),
             )
             previous_id = resp.id
             calls = [item for item in resp.output if item.type == "function_call"]
@@ -200,8 +158,6 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
                     history.append({"role": "assistant", "content": text})
                 history += [{"type": "function_call", "call_id": c.call_id, "name": c.name, "arguments": c.arguments}
                             for c in calls]
-            elif stateless:  # every output item, verbatim and in order (reasoning stays encrypted; never logged)
-                history += [item_to_input(item) for item in resp.output]
             events.emit("agent.message", **ids, model_call_id=mc_id, text=text,
                         tool_calls=[{"name": c.name, "arguments": c.arguments} for c in calls])
             step = {"model_call": mc_id, "model_ms": round(res.latency_ms), **usage, "cost_usd": call_cost,

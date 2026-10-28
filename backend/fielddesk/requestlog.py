@@ -80,7 +80,5 @@ class RequestLogMiddleware:
                     "db_ms": round(stats.db_ms, 3),
                     "query_count": stats.queries,
                     "pool_wait_ms": round(stats.pool_wait_ms, 3),
-                    "commit_ack_mono_ns": stats.commit_ack_mono_ns,
-                    "change_id": stats.change_id,
                 }
                 self.out.write(json.dumps(record) + "\n")
