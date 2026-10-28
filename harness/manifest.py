@@ -246,7 +246,8 @@ EXECUTION_INPUTS = ["oracle", "data/schema.sql", "data/indexes.sql", "data/gener
 # verdict.json as `analysis_fingerprint`; never pool verdicts produced by different analyzers.
 ANALYSIS_INPUTS = ["analysis", "docs/protocol.md"]
 # Per-trial treatment values that a paired comparison may vary on purpose. Everything else must match.
-TREATMENT_FIELDS = (("fault", "duration_s"), ("fault_enabled",))
+TREATMENT_FIELDS = (("fault", "duration_s"), ("fault_enabled",), ("agent_runtime", "retry_after_guard"),
+                    ("scripted", "think_time_s"), ("scripted", "think_samples_from"))
 CONFIG_HASH_VERSION = 2
 
 

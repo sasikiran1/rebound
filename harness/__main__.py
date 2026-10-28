@@ -25,11 +25,11 @@ def cmd_endpoints(args) -> None:
 
 
 def cmd_verify_model(args) -> None:
-    asyncio.run(single.verify_model(args.model))
+    asyncio.run(single.verify_model(args.model, args.continuation))
 
 
 def cmd_goal(args) -> None:
-    asyncio.run(single.run_one(args.task, args.model))
+    asyncio.run(single.run_one(args.task, args.model, args.continuation))
 
 
 def cmd_trial(args) -> None:
@@ -44,7 +44,8 @@ def cmd_trial(args) -> None:
               f"(per-trial cap ${m.limits.trial_budget_usd:.2f} cancels the trial)")
     out = trial.run(args.manifest, args.condition, args.gate, experiment=args.experiment, repeat=args.repeat,
                     block=args.block, label=args.label,
-                    fault_enabled=False if args.no_fault else None, fault_duration_s=args.fault_duration_s)
+                    fault_enabled=False if args.no_fault else None, fault_duration_s=args.fault_duration_s,
+                    retry_after_guard=True if args.retry_after_guard else None, unpaced=args.unpaced)
     verdict = out / "verdict.json"
     if verdict.exists():
         v = json.loads(verdict.read_text())
@@ -183,10 +184,14 @@ def main() -> None:
     )
     sp = sub.add_parser("verify-model", help="one minimal tool call plus one previous_response_id continuation")
     sp.add_argument("--model", default="muse-spark-1.3")
+    sp.add_argument("--continuation", default="previous_response_id",
+                    choices=["previous_response_id", "stateless_reasoning"])
     sp.set_defaults(func=cmd_verify_model)
     sp = sub.add_parser("goal", help="run one task end to end with a live agent, then the oracle")
     sp.add_argument("--task", default=None, help="task ID (default: first one-day task)")
     sp.add_argument("--model", default="muse-spark-1.3")
+    sp.add_argument("--continuation", default="previous_response_id",
+                    choices=["previous_response_id", "full_history", "stateless_reasoning"])
     sp.set_defaults(func=cmd_goal)
     sp = sub.add_parser("trial", help="run one trial end to end")
     sp.add_argument("--manifest", required=True)
@@ -198,6 +203,9 @@ def main() -> None:
     sp.add_argument("--label", default=None)
     sp.add_argument("--no-fault", action="store_true", help="healthy reference trial (no toxic)")
     sp.add_argument("--fault-duration-s", type=float, default=None, help="override, e.g. the unfamiliar 20 s fault")
+    sp.add_argument("--retry-after-guard", action="store_true",
+                    help="treatment: the agent runtime waits out Retry-After before the model's next request")
+    sp.add_argument("--unpaced", action="store_true", help="treatment: scripted client with no think time")
     sp.set_defaults(func=cmd_trial)
     sp = sub.add_parser("analyze", help="re-analyze saved bundles into <trial>/reanalysis/ (fails closed on checksums)")
     sp.add_argument("run")

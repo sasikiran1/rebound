@@ -46,10 +46,11 @@ calibrate:
 	$(PY) -m harness step-test --manifest manifests/exploratory/explore_v1.yaml
 
 verify-model:
-	$(PY) -m harness verify-model $(if $(MODEL),--model $(MODEL))
+	$(PY) -m harness verify-model $(if $(MODEL),--model $(MODEL)) $(if $(CONTINUATION),--continuation $(CONTINUATION))
 
 goal: reset
-	$(PY) -m harness goal $(if $(TASK),--task $(TASK)) $(if $(MODEL),--model $(MODEL))
+	$(PY) -m harness goal $(if $(TASK),--task $(TASK)) $(if $(MODEL),--model $(MODEL)) \
+		$(if $(CONTINUATION),--continuation $(CONTINUATION))
 
 # make trial CONDITION=agent GATE=off [MANIFEST=...] [REPEAT=1] [BLOCK=1]
 trial:

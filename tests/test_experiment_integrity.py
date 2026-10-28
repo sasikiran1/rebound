@@ -138,3 +138,34 @@ def test_analyze_cli_fails_closed_on_corrupt_raw_evidence(tmp_path, monkeypatch,
     assert exc.value.code != 0
     assert not called, "analysis ran on evidence whose checksum failed"
     assert json.loads((d / "verdict.json").read_text()) == {"status": "valid"}  # the saved verdict is untouched
+
+
+def test_compat_fingerprint_ignores_only_declared_treatments(tmp_path, monkeypatch):
+    from harness import manifest
+
+    for rel in ("prompts/p.md", "prompts/t.json", "harness/a.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x")
+    monkeypatch.setattr(manifest, "ROOT", tmp_path)
+
+    def res(**over):
+        r = {"model": {"prompt": "prompts/p.md", "tools": "prompts/t.json", "continuation": "stateless_reasoning"},
+             "backend": {"images": {}}, "data": {"checksum": "c"}, "tasks": {"sha256": "t"},
+             "fault": {"duration_s": 10, "latency_ms": 400}, "fault_enabled": True,
+             "agent_runtime": {"retry_after_guard": False}, "scripted": {"think_time_s": 0.8,
+                                                                         "think_samples_from": None}}
+        for path, value in over.items():
+            node = r
+            keys = path.split(".")
+            for k in keys[:-1]:
+                node = node[k]
+            node[keys[-1]] = value
+        return r
+
+    base = manifest.compat_fingerprint(res())
+    for treatment in ({"fault.duration_s": 20}, {"fault_enabled": False}, {"agent_runtime.retry_after_guard": True},
+                      {"scripted.think_time_s": 0.0}, {"scripted.think_samples_from": "runs/x/tr_0001/client.jsonl"}):
+        assert manifest.compat_fingerprint(res(**treatment)) == base, treatment
+        assert manifest.config_hash(res(**treatment)) != manifest.config_hash(res()), treatment
+    for change in ({"model.continuation": "full_history"}, {"fault.latency_ms": 200}):
+        assert manifest.compat_fingerprint(res(**change)) != base, change

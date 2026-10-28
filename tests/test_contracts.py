@@ -77,3 +77,26 @@ def test_compare_refuses_mixed_configurations():
     c = [v(block=b, fp="sha256:b", trial_id=f"c{b}") for b in (1, 2, 3)]
     r = compare(t, c)
     assert r["problems"] and all(m["verdict"] == INSUFFICIENT for m in r["metrics"].values())
+
+
+def test_screening_decision_supports_h1_and_h2_only_with_two_blocks():
+    from analysis.screening import INSUFFICIENT, SUPPORTED, decide
+
+    def trial(arm, block, viol_share=0.0, followed=10, rejected=10, correct=227, f60=0.99):
+        x = v(block=block, followed=followed, violations=int(viol_share * followed), correct=correct)
+        x.update(arm=arm, backpressure={**x["backpressure"], "violation_share": viol_share},
+                 exposure={"fault": {"goal_requests_rejected": rejected, "goal_share_inflight": 0.01},
+                           "post60": {"goal_requests_rejected": 0}},
+                 cohorts=[{"cohort": "baseline", "R_attempts_per_goal": 4.0, "goals": 40},
+                          {"cohort": "fault", "R_attempts_per_goal": 5.0, "goals": 40}])
+        x["goals"]["F_60s"] = f60
+        return x
+
+    rows = []
+    for b in (1, 2):
+        rows += [trial("agent", b, viol_share=1.0, rejected=80), trial("agent-guard", b, rejected=20),
+                 trial("scripted-paced", b), trial("scripted-unpaced", b)]
+    res = decide(rows)
+    assert res["H1_backpressure_violation"]["verdict"] == SUPPORTED
+    assert res["H2_guard_preserves_useful_work"]["verdict"] == SUPPORTED
+    assert decide(rows[:4])["H1_backpressure_violation"]["verdict"] == INSUFFICIENT  # one block is not enough

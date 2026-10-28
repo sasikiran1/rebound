@@ -112,7 +112,8 @@ def verify_raw(trial_dir: Path) -> list[str]:
 class Trial:
     def __init__(self, manifest_path: str, condition: str, gate_on: bool, experiment: str | None = None,
                  repeat: int | None = None, block: int | None = None, label: str | None = None,
-                 fault_enabled: bool | None = None, fault_duration_s: float | None = None):
+                 fault_enabled: bool | None = None, fault_duration_s: float | None = None,
+                 retry_after_guard: bool | None = None, unpaced: bool = False):
         if condition not in CONDITIONS:
             raise ValueError(f"condition must be one of {CONDITIONS}")
         self.m = load(manifest_path)
@@ -120,6 +121,11 @@ class Trial:
             self.m.fault_enabled = fault_enabled
         if fault_duration_s is not None:
             self.m.fault.duration_s = fault_duration_s
+        # Declared treatment overrides (harness/manifest.py TREATMENT_FIELDS); recorded in the resolved manifest.
+        if retry_after_guard is not None:
+            self.m.agent_runtime.retry_after_guard = retry_after_guard
+        if unpaced:
+            self.m.scripted.think_time_s, self.m.scripted.think_samples_from = 0.0, None
         self.manifest_path = manifest_path
         self.condition, self.gate_on = condition, gate_on
         self.experiment = experiment or self.m.experiment
