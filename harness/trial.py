@@ -486,10 +486,13 @@ class Trial:
         self.meta["final_state"] = final
         self.save_meta()
         try:
+            from analysis.contracts import trial_contract
             from analysis.metrics import analyze
             from analysis.report import trial_report
             result = analyze(self.dir)
             trial_report(self.dir, result)
+            (self.dir / "contract.json").write_text(
+                json.dumps(trial_contract(result, integrity_ok=True), indent=2, default=str) + "\n")
             if final == "COMPLETE" and result["status"] != "valid":
                 final = "INVALID" if result["status"] == "invalid" else "INCONCLUSIVE"
         except Exception as exc:  # noqa: BLE001

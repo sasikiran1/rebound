@@ -106,6 +106,10 @@ def cmd_analyze(args) -> None:
             failures += 1
             print(f"{d}: ANALYSIS ERROR {exc!r}")
             continue
+        from analysis.contracts import trial_contract
+
+        contract = trial_contract(res, integrity_ok=True)
+        (out / "contract.json").write_text(json.dumps(contract, indent=2, default=str) + "\n")
         saved_path = d / "verdict.json"
         diffs = compare_verdicts(json.loads(saved_path.read_text()), res) if saved_path.exists() else [
             "no saved verdict.json"]
@@ -117,6 +121,7 @@ def cmd_analyze(args) -> None:
         print(f"{d}: {res['status']} recovery={res['recovery']['verdict']} T_rec={res['recovery']['t_rec_s']} "
               f"S={res['goals']['success_S']} D={res['background']['lost_service_D']:.0f} "
               f"retry_after_violations={bp.get('violations')}/{bp.get('followed_by_attempt')} "
+              f"contract={contract['overall']} "
               + ("MATCHES SAVED VERDICT" if not diffs else f"DIFFERS: {diffs}"))
     if failures:
         raise SystemExit(1)
