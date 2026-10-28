@@ -29,6 +29,8 @@ class Facts:
     covers_region: bool | None = None
     slot_occupants: int | None = None  # scheduled appointments in the final slot
     last_change_to_slot: int | None = None
+    # appointment_changes.applied_at: clock_timestamp() of the INSERT, which precedes COMMIT (by one round trip,
+    # about 400 ms during the fault). It is not the commit time; the backend logs commit acknowledgment separately.
     applied_at: dt.datetime | None = None
 
 
@@ -118,6 +120,6 @@ async def verdict_for(conn: asyncpg.Connection, task: dict, end_reason: str | No
         "task_id": task["task_id"],
         "verdict": classify(task, facts, end_reason),
         "end_reason": end_reason,
-        "completed_at": facts.applied_at.isoformat() if facts.applied_at else None,
+        "change_inserted_at": facts.applied_at.isoformat() if facts.applied_at else None,
         "facts": {k: (v.isoformat() if isinstance(v, (dt.date, dt.datetime)) else v) for k, v in asdict(facts).items()},
     }

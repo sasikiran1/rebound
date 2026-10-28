@@ -24,6 +24,10 @@ class RequestStats:
     gate_decision: str = "admitted"  # admitted | queued | rejected (always admitted with the gate off)
     queue_wait_ms: float = 0.0
     reject_reason: str | None = None
+    # reschedule only: monotonic time at which COMMIT returned successfully, and the committed change. This is the
+    # backend's commit acknowledgment; appointment_changes.applied_at is the INSERT statement time, which precedes it.
+    commit_ack_mono_ns: int | None = None
+    change_id: int | None = None
 
 
 current_stats: ContextVar[RequestStats | None] = ContextVar("current_stats", default=None)

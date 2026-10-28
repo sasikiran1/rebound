@@ -118,11 +118,11 @@ async def run_one(task_id: str | None, model: str) -> None:
     finally:
         await conn.close()
     events.emit("oracle.verdict", goal_id=out.goal_id, task_id=task["task_id"], verdict=v["verdict"],
-                end_reason=v["end_reason"], completed_at=v["completed_at"], facts=v["facts"])
+                end_reason=v["end_reason"], change_inserted_at=v["change_inserted_at"], facts=v["facts"])
     events.close()
     print(f"ended: {out.end_reason}{' (' + out.limit + ')' if out.limit else ''} after {out.duration_s} s, "
           f"{out.model_calls} model calls, {out.tool_calls} tool calls")
     print(f"tokens: input {out.input_tokens} (cached {out.cached_tokens}), output {out.output_tokens} "
           f"(reasoning {out.reasoning_tokens}); estimated cost ${out.cost_usd:.5f}")
-    print(f"oracle: {v['verdict']}  completed_at={v['completed_at']}")
+    print(f"oracle: {v['verdict']}  change_inserted_at={v['change_inserted_at']}")
     print(f"events: runs/{experiment_id}/{trial_id}/")
