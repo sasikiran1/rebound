@@ -327,7 +327,42 @@ the provider's response store, not expiry. It did not occur on Day 1 or in tr_00
 **Contradiction with the design (provider table: 400 → no retry), changed:** the provider wrapper now
 treats this one 400 like a 503: up to 3 retries after fixed waits of 1, 2 and 4 s, recorded as provider retries and
 provider wait. Any other 400 still ends the goal as `provider_failed`. This is a model-provider retry, not a
-transport retry to FieldDesk, so rule 2 still holds. Validated in tr_0013 before the freeze.
+transport retry to FieldDesk, so rule 2 still holds.
+
+**tr_0013 (gate 12 / 1.5 s, with that retry): still INCONCLUSIVE.** 18/228 goals `provider_failed` (36 failed
+calls, 148 provider retries); every failing call had used all three retries, so the referenced responses were never
+found, not merely late. Recovery `slow` (T_rec 69 s; 18 unhealthy seconds), D 5,137, 210 correct, $2.19.
+What the lost responses have in common: none of 230 turn-2 continuations (which reference the goal's first response,
+itself not a continuation) failed; every lost reference pointed at a response that was itself created with a
+`previous_response_id` (turns 3–6), across all tools and response shapes. About 3% of such references failed.
+
+**Contradiction with the design ("continue each goal's conversation with previous_response_id"),
+changed:** continuation is now a manifest setting, and exploration from tr_0014 on uses `full_history`: every model
+call carries the goal's whole conversation from the runner's own records (user message, the model's visible text
+and function calls, the tool outputs), with `store=False`; hidden reasoning items are not carried over. Checked
+with two calls first: accepted, caching still applies (497 of 673 input tokens cached on the second call), $0.002.
+Input tokens were already reported per call for the whole conversation, so cost should not change. The
+not-yet-stored retry stays in the wrapper but cannot trigger without stored responses.
+
+**tr_0014 (full_history, gate 12 / 1.5 s): valid.** 0 provider failures, 0 provider retries. T_rec 10 s (`fast`),
+D 5,059, 227/228 correct (1 `failed`), baseline rejections 0.16%, $2.50 ($0.0109 per goal; 1,215 calls,
+3.78 M input tokens of which 2.72 M cached).
+
+**New measured fact that changes the calibration (decision needed before the freeze):** with `store=False` the
+provider's latency fell from a p50 of about 9.7 s per call (all `previous_response_id` trials) to **0.75 s**.
+
+| | tr_0002 (stored, gate off) | tr_0003 (scripted, 10.25 s think) | tr_0014 (full_history, gate on) |
+|---|---|---|---|
+| Model latency p50 | 9.74 s | – | 0.75 s |
+| Agents' median healthy step | 10.25 s | – | 0.77 s |
+| Goal duration p50 / p90 | 42.4 / 53.9 s | 41.0 / 41.1 s | 3.9 / 5.0 s |
+| Active goals, 60–550 s: mean / max | 17.7 / 24 | 16.4 / 24 | **1.7 / 11** |
+| Fault cohort: attempts per goal, DB ms per goal | 4.45, 37.4 | 4.19, 33.3 | 5.88, 81.9 |
+| Fault cohort reactions | 11 same-call, 2 switch, 3 other | 1 switch, 2 other | 45 same-call, 6 switch, 26 other |
+
+At 0.4 goals/s only about 2 agents are active at once, against the design's 8–16 target, and the frozen scripted
+think time (10.25 s) no longer matches agent pacing. Fast agents also react much more to the fault per goal (5.88
+attempts vs 4.45; 2.2× the DB time). The freeze is on hold until the pacing and arrival rate are decided.
 
 Gate choice for the freeze, by the section 7a rule: **12 tokens, queue max 24, queue wait 1.5 s** (smallest scripted
 healthy-period overhead, +1.9%). In the agent trials both candidates gave the same recovery (T_rec 10 s vs 20 s with
