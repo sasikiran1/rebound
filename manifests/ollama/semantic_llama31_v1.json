@@ -1,0 +1,8 @@
+{"declared": "2026-10-28 ~10:40 EDT, before any run of this plan",
+ "purpose": "Same constraint cases and settings as semantic_v1 runs[0] for Ollama-library llama3.1:8b (Meta weights, Ollama's curated chat template), after the Hugging Face GGUF of the same model failed multi-step tool calling. Also provides the C and L inputs for the campaign arrival-rate rule.",
+ "runs": [
+  {"models": ["llama3.1:8b"],
+   "settings": [{"name": "orig", "options": {"temperature": 0, "seed": 41, "num_ctx": 8192}, "num_predict": 1536, "think": null},
+                {"name": "ctx16k", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": null}],
+   "cases": ["LATE_A", "TECH_A", "FULL_A", "LATE_B", "TECH_B", "FULL_B"]}
+ ]}

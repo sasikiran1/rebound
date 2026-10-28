@@ -39,10 +39,16 @@ utilization so model queueing does not dominate. The pilot checks it (validity r
 | B_bg | background only | on | off |
 | D_bg | background only | on | on |
 
-Models: gemma4-12b-16k:latest and hf.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M (Llama: no thinking
-field sent). qwen3.5-9b-16k was planned but removed before any campaign trial: in the ctx16k semantic runs its
-median model call took 12.3 s (about 27 output tokens/s, 100–400 visible tokens per call), which under the rate rule
-allows about 2 goals per trial. The replacement was chosen by the user from the installed models.
+Models: gemma4-12b-16k:latest and llama3.1:8b (Ollama library; no thinking field sent). qwen3.5-9b-16k was planned
+but removed before any campaign trial: in the ctx16k semantic runs its median model call took 12.3 s (about 27
+output tokens/s, 100–400 visible tokens per call), which under the rate rule allows about 2 goals per trial. The
+first replacement, the Hugging Face GGUF of Llama 3.1 8B, was dropped before any campaign trial because through
+Ollama it wrote tool calls as plain text after its first call (semantic_hf_v1). The user then chose the Ollama
+library build of the same weights; it enters the campaign only if its semantic runs show working multi-step tool
+calls (at least one correct booking and one correct deferral among the TECH and FULL cases).
+Outcome of that check (sem_llama31_v1, before any campaign trial): 0 of 12 correct; after its first call it wrote
+tool calls as plain text. **The campaign therefore runs gemma4-12b-16k only**: one block = A, B, C, D, B_bg, D_bg
+(6 trials), pilot = gemma4 B and D on task set A.
 One block = these 10 trials in an order shuffled with seed 20261028 + block number. Pilot = Llama 3.1 8B, conditions
 B and D only, on task set A (validates fault, guards, model pacing and the gate path). Then three frozen blocks on
 task set B. Cool-down between trials: 30 s plus the CPU idle check.

@@ -1,0 +1,21 @@
+# block 1 (shuffle seed 20261029)
+manifests/ollama/recovery_gemma4_B.yaml agent off 1 gemma4-A --no-fault
+manifests/ollama/recovery_gemma4_B.yaml background on 1 bg-D
+manifests/ollama/recovery_gemma4_B.yaml agent on 1 gemma4-C --no-fault
+manifests/ollama/recovery_gemma4_B.yaml agent off 1 gemma4-B
+manifests/ollama/recovery_gemma4_B.yaml agent on 1 gemma4-D
+manifests/ollama/recovery_gemma4_B.yaml background off 1 bg-B
+# block 2 (shuffle seed 20261030)
+manifests/ollama/recovery_gemma4_B.yaml agent on 2 gemma4-D
+manifests/ollama/recovery_gemma4_B.yaml agent off 2 gemma4-A --no-fault
+manifests/ollama/recovery_gemma4_B.yaml background on 2 bg-D
+manifests/ollama/recovery_gemma4_B.yaml agent on 2 gemma4-C --no-fault
+manifests/ollama/recovery_gemma4_B.yaml agent off 2 gemma4-B
+manifests/ollama/recovery_gemma4_B.yaml background off 2 bg-B
+# block 3 (shuffle seed 20261031)
+manifests/ollama/recovery_gemma4_B.yaml background off 3 bg-B
+manifests/ollama/recovery_gemma4_B.yaml background on 3 bg-D
+manifests/ollama/recovery_gemma4_B.yaml agent off 3 gemma4-A --no-fault
+manifests/ollama/recovery_gemma4_B.yaml agent on 3 gemma4-D
+manifests/ollama/recovery_gemma4_B.yaml agent off 3 gemma4-B
+manifests/ollama/recovery_gemma4_B.yaml agent on 3 gemma4-C --no-fault

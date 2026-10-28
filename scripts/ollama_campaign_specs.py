@@ -18,9 +18,8 @@ from pathlib import Path
 
 import yaml
 
-MODELS = {"gemma4": ("gemma4-12b-16k:latest", Path("runs/ollama-semantic/sem_v1/results.json"), False),
-          "llama31": ("hf.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M",
-                      Path("runs/ollama-semantic/sem_hf_v1/results.json"), None)}
+# llama3.1:8b failed the protocol's entry check (0/12 correct, sem_llama31_v1), so the campaign is gemma4 only.
+MODELS = {"gemma4": ("gemma4-12b-16k:latest", Path("runs/ollama-semantic/sem_v1/results.json"), False)}
 TASKS = {"A": ("data/tasks/tasks_dev_A.jsonl", "1cf371381b1f8c8271a173c3a2171a3fe8b476eea34eab13c12688c1479710e0"),
          "B": ("data/tasks/tasks_eval_B.jsonl", "353954f9da39099571ce903813bc770e0b4e687a3118b1c9aa77c511a4fab341")}
 OUT = Path("manifests/ollama")
@@ -64,7 +63,7 @@ def main() -> None:
             p = OUT / f"recovery_{tag}_{s}.yaml"
             p.write_text(yaml.safe_dump(manifest(tag, s, r["goals_per_s"]), sort_keys=False))
             paths[tag, s] = p
-    pilot = [f"{paths['llama31', 'A']} agent off 0 pilot-llama31-B", f"{paths['llama31', 'A']} agent on 0 pilot-llama31-D"]
+    pilot = [f"{paths['gemma4', 'A']} agent off 0 pilot-gemma4-B", f"{paths['gemma4', 'A']} agent on 0 pilot-gemma4-D"]
     (OUT / "pilot_v1.specs").write_text("\n".join(pilot) + "\n")
     lines = []
     for block in (1, 2, 3):
