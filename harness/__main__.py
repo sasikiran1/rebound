@@ -54,18 +54,72 @@ def cmd_trial(args) -> None:
     print(f"trial bundle: {out}")
 
 
-def cmd_analyze(args) -> None:
-    from analysis.metrics import analyze
-    from analysis.report import trial_report
-    from harness.trial import verify_sums
+# Version 1 results that re-analysis must reproduce exactly (newer metrics are added, never redefined).
+COMPARE_KEYS = [
+    ("status",), ("recovery", "t_rec_s"), ("recovery", "verdict"), ("recovery", "unhealthy_seconds_in_window"),
+    ("goals", "scheduled"), ("goals", "verdicts"), ("goals", "success_S"), ("background", "lost_service_D"),
+    ("background", "baseline_p95_ms"), ("background", "baseline_success"), ("retries", "classes"),
+    ("model", "cost_usd"), ("gate_stats", "decisions"),
+]
 
-    for d in sorted(Path(args.run).glob("tr_*")) if not (Path(args.run) / "trial.json").exists() else [Path(args.run)]:
-        bad = verify_sums(d) if (d / "SHA256SUMS").exists() else ["SHA256SUMS missing"]
-        res = analyze(d)
-        trial_report(d, res)
+
+def _get(d, path):
+    for k in path:
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
+
+
+def compare_verdicts(saved: dict, new: dict, rel_tol: float = 1e-9) -> list[str]:
+    diffs = []
+    for path in COMPARE_KEYS:
+        a, b = _get(saved, path), _get(new, path)
+        same = (abs(a - b) <= rel_tol * max(1.0, abs(a)) if isinstance(a, (int, float)) and isinstance(b, (int, float))
+                and not isinstance(a, bool) else a == b)
+        if not same:
+            diffs.append(f"{'.'.join(path)}: saved {a!r} != re-analysis {b!r}")
+    return diffs
+
+
+def cmd_analyze(args) -> None:
+    """Re-analyze saved bundles without a model key or containers. Fails closed: a bundle whose raw evidence does not
+    match SHA256SUMS is not analyzed at all. Output goes to <trial>/reanalysis/, never over the recorded files, and is
+    compared with the saved verdict. Exit status is non-zero on any integrity failure (and on any difference with
+    --strict)."""
+    import analysis.metrics
+    from analysis.report import trial_report
+    from harness.trial import verify_raw
+
+    run = Path(args.run)
+    dirs = sorted(run.glob("tr_*")) if not (run / "trial.json").exists() else [run]
+    failures = 0
+    for d in dirs:
+        bad = verify_raw(d)
+        if bad:
+            failures += 1
+            print(f"{d}: INTEGRITY FAILURE, not analyzed: {bad}")
+            continue
+        out = d / "reanalysis"
+        try:
+            res = analysis.metrics.analyze(d, out_dir=out)
+            trial_report(d, res, out_dir=out)
+        except Exception as exc:  # noqa: BLE001 - one broken bundle must not hide the others
+            failures += 1
+            print(f"{d}: ANALYSIS ERROR {exc!r}")
+            continue
+        saved_path = d / "verdict.json"
+        diffs = compare_verdicts(json.loads(saved_path.read_text()), res) if saved_path.exists() else [
+            "no saved verdict.json"]
+        (out / "comparison.json").write_text(json.dumps({"matches_saved": not diffs, "differences": diffs}, indent=2)
+                                             + "\n")
+        if diffs and getattr(args, "strict", False):
+            failures += 1
+        bp = res.get("backpressure") or {}
         print(f"{d}: {res['status']} recovery={res['recovery']['verdict']} T_rec={res['recovery']['t_rec_s']} "
-              f"S={res['goals']['success_S']} D={res['background']['lost_service_D']:.0f}"
-              + (f"  CHECKSUM MISMATCH {bad}" if bad else ""))
+              f"S={res['goals']['success_S']} D={res['background']['lost_service_D']:.0f} "
+              f"retry_after_violations={bp.get('violations')}/{bp.get('followed_by_attempt')} "
+              + ("MATCHES SAVED VERDICT" if not diffs else f"DIFFERS: {diffs}"))
+    if failures:
+        raise SystemExit(1)
 
 
 def cmd_mark_crashed(args) -> None:
@@ -131,7 +185,7 @@ def main() -> None:
     sp.set_defaults(func=cmd_goal)
     sp = sub.add_parser("trial", help="run one trial end to end")
     sp.add_argument("--manifest", required=True)
-    sp.add_argument("--condition", required=True, choices=["agent", "scripted", "replay"])
+    sp.add_argument("--condition", required=True, choices=["agent", "scripted", "replay", "background"])
     sp.add_argument("--gate", required=True, choices=["on", "off"])
     sp.add_argument("--experiment", default=None)
     sp.add_argument("--repeat", type=int, default=None)
@@ -140,8 +194,9 @@ def main() -> None:
     sp.add_argument("--no-fault", action="store_true", help="healthy reference trial (no toxic)")
     sp.add_argument("--fault-duration-s", type=float, default=None, help="override, e.g. the unfamiliar 20 s fault")
     sp.set_defaults(func=cmd_trial)
-    sp = sub.add_parser("analyze", help="re-run analysis and reports for a trial or experiment directory")
+    sp = sub.add_parser("analyze", help="re-analyze saved bundles into <trial>/reanalysis/ (fails closed on checksums)")
     sp.add_argument("run")
+    sp.add_argument("--strict", action="store_true", help="also fail if a version 1 result differs from the saved one")
     sp.set_defaults(func=cmd_analyze)
     sp = sub.add_parser("mark-crashed", help="mark a trial whose runner died as INVALID, keeping all files")
     sp.add_argument("trial")

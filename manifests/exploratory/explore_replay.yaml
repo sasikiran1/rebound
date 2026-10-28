@@ -19,3 +19,4 @@ limits: {model_calls_per_goal: 16, tool_calls_per_goal: 14, goal_deadline_s: 240
          input_tokens_per_goal: 80000, max_concurrent_goals: 24, trial_budget_usd: 10}
 calibration: {healthy_bg_p95_ms: 8.9, capacity_rps: 800, capacity_db_ms_per_s: 3737, notes: "step test runs/calibration/steptest_20261027T180416; knee 900 rps"}  # TUNABLE
 replay_trace: runs/explore-v1/tr_0002/client.jsonl  # mechanics test only: this trace includes the fault
+replay_mechanics_only: true
