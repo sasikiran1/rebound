@@ -15,11 +15,9 @@ import pandas as pd
 
 
 def get(df, block, label):
-    r = df[(df.block == block) & (df.label == label)]
-    if len(r) != 1:
-        return None
-    r = r.iloc[0]
-    return r if r.status == "valid" else None
+    """The one VALID trial for this arm (an invalid original plus its declared rerun leaves one valid row)."""
+    r = df[(df.block == block) & (df.label == label) & (df.status == "valid")]
+    return r.iloc[0] if len(r) == 1 else None
 
 
 def t_rec(r):
