@@ -17,8 +17,12 @@ preflight).
 | Warm-up | 0–60 | not measured |
 | Baseline | 60–180 | reference values for recovery |
 | Fault | 180–190 | 400 ms ± 50 ms downstream latency on the `pg` proxy (unfamiliar condition: 180–200) |
-| Observation | t_off – t_off+360 | t_off = moment the toxic is removed |
-| Drain | 550 – at most 790 | arrivals stop at 550; goals still running at 790 are cancelled and are `unfinished` |
+| Observation | t_off – t_off+300 | t_off = moment the toxic is removed |
+| Drain | 490 – at most 730 | arrivals stop at 490; goals still running at 730 are cancelled and are `unfinished` |
+
+The 300 s observation window and the 490 s arrival stop (originally 360 s and 550 s) are the design's budget-gate
+step 2, taken before the freeze to keep the remaining evaluation spend under $20. Every valid exploration trial
+recovered within 69 s, so a recovery up to 240 s can still show its 60 s of sustained health.
 
 Guards (`harness/trial.py`): at fault time the backend-side baseline background success must be ≥ 99% and its p95
 ≤ 1.5 × the calibrated healthy p95, else INVALID ("baseline unhealthy"). During the fault the canary query through
@@ -41,8 +45,11 @@ header, which the gate never reads) and its 1 Hz sampler (`samples.jsonl`).
   3. mean sampled in-flight in the window ≤ `B_inf` + 2
   4. mean sampled pool waiters in the window ≤ `B_wait` + 1
   A window with no background request or no sample is unhealthy.
-- T_rec = (first whole second t ≥ t_off such that t … t+59 are all healthy) − t_off, with t+59 ≤ t_off + 360.
-- Verdict: `fast` (T_rec ≤ 30 s), `slow` (recovered, T_rec > 30 s), `not_recovered_within_360s`.
+- T_rec = (first whole second t ≥ t_off such that t … t+59 are all healthy) − t_off, with t+59 ≤ t_off + 300.
+- Verdict: `fast` (T_rec ≤ 30 s), `slow` (recovered, T_rec > 30 s), `not_recovered_within_300s`.
+- Because the window trails by 10 s, requests that arrived during the fault stay in it for 10 s after t_off: a
+  system that recovers instantly scores T_rec ≈ 10 s. Lost background service D is reported beside T_rec for that
+  reason.
   Never "never recovers".
 - Useful-service check: goal success among goals scheduled in [t_off + T_rec, t_off + T_rec + 120) divided by the
   baseline cohort's success; flagged if below 0.8.
@@ -59,10 +66,10 @@ Completion time = `appointment_changes.applied_at` (backend commit) − goal arr
 
 - Every rate divides by goals scheduled. S = N_correct / N_scheduled.
 - F(τ) = share of feasible goals with a `correct` commit within τ of arrival; F(60 s), F(180 s) reported.
-- Cohorts by arrival time: baseline [60, 150), fault [150, 250), post [250, 550).
+- Cohorts by arrival time: baseline [60, 150), fault [150, 250), post [250, 550) (arrivals stop at 490).
   R_C = client HTTP attempts per goal, W_C = backend DB ms per goal (joined on the goal header).
   Amplification = R_C(condition) / R_C(replay), gate off, 10 s fault, means over valid trials.
-- Lost background service D = Σ over 10 s windows w from floor(t_on) while w + 10 ≤ t_off + 360 of
+- Lost background service D = Σ over 10 s windows w from floor(t_on) while w + 10 ≤ t_off + 300 of
   max(0, offered_w × B_s − successes_w), offered_w = background rate × 10.
 - Model cost = Σ per call (1.25·(I−K) + 0.15·K + 4.25·O) / 1e6 for Spark 1.3, with I, K, O as reported per call.
   With `previous_response_id`, per-call `input_tokens` already include the earlier turns (measured Day 1).
@@ -91,10 +98,16 @@ invalid. Every trial is kept with its state and reasons.
 - Headline: 5 cells × 3 repeats in 3 blocks: agent gate-off, agent gate-on, scripted gate-off, scripted gate-on,
   replay gate-off. Order inside each block is a seeded shuffle (seed recorded in `docs/FREEZE.md`).
 - Replay trace: one healthy reference agent trial (no fault) on set B before block 1.
-- Unfamiliar condition: 20 s fault, agent gate-off and gate-on (two each if budget allows, one minimum).
+- Unfamiliar condition: 20 s fault, agent gate-off and gate-on, one each (the plan's minimum).
+- Run list: `manifests/frozen/eval_v1.specs` (reference trial first, then blocks shuffled with seeds 20261102–4,
+  then the unfamiliar pair), run by `scripts/eval_campaign.sh`.
+- Spend cap: at most $20 of model spend for the whole evaluation (cumulative across all trial bundles ≤ $34.06).
+  Before each agent trial the runner re-sums recorded spend; a trial that could pass the cap at $2.60 estimated
+  cost is skipped and logged, never run, and the report then states which cell has fewer repeats.
 - Between trials: full reset (always), 60 s cool-down.
 - Frozen settings chosen in exploration (task set A): background 520 rps (total healthy DB time about 49% of the
-  measured 3,737 DB-ms/s capacity), scripted think time 10.25 s (agents' median healthy step time), gate 12 tokens,
+  measured 3,737 DB-ms/s capacity), scripted think time 0.77 s (agents' median healthy step time under full_history continuation, tr_0014; the
+  earlier 10.25 s was measured under previous_response_id and is not used), gate 12 tokens,
   queue max 24, queue wait 1.5 s, Retry-After 2 s (smallest scripted healthy-period overhead in the 2 × 2 grid).
 - Model continuation: `full_history` (each call carries the goal's whole visible conversation, `store=False`),
   not `previous_response_id`: in exploration the provider permanently lost about 3% of stored responses that were
