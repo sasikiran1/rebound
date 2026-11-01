@@ -8,7 +8,6 @@ from types import SimpleNamespace as NS
 
 import pandas as pd
 
-from analysis.experiment import acceptance
 from analysis.metrics import goals_frame
 from harness.adapter import GoalScope, build_request
 
@@ -50,20 +49,31 @@ def test_cost_estimate_matches_the_measured_eval_mix():
     assert 0.009 < typical < 0.012 and cap > typical
 
 
-def cell(gate, block, t_rec, verdict, correct, D, fault_s=20.0):
-    return {"condition": "agent", "fault_s": fault_s, "fault_on": True, "gate": gate, "block": block,
-            "t_rec_s": t_rec, "recovery": verdict, "correct": correct, "D": D, "baseline_S": 1.0,
-            "bg_p95_baseline": 7.0, "baseline_rejection_share": 0.0, "incorrect": 0, "duplicate": 0}
-
-
 def test_c5_fails_when_the_unfamiliar_fault_loses_useful_work():
     # eval-v1 tr_0017 / tr_0018: recovery faster and less lost service, but 8 fewer correct goals
-    df = pd.DataFrame([cell("off", 4, 34.0, "slow", 209, 19491.0), cell("on", 4, 10.0, "fast", 201, 10212.0)])
-    r = acceptance(df)["fault_20s"]
-    assert r["c5_unfamiliar"]["direction_holds"] == {"c2_recovery": True, "c3_useful_work": False,
-                                                     "c4_ordinary_users": True}
-    assert r["c5_unfamiliar"]["pass"] is False
-    assert r["c2_recovery"]["pass"] is None and r["c2_recovery"]["status"].startswith("insufficient")
+    from analysis.experiment import c5
+    m = {"t_rec_off": 34.0, "t_rec_on": 10.0, "all_fast_off": False, "all_fast_on": True, "correct_off": 209,
+         "correct_on": 201, "incorrect_off": 0, "incorrect_on": 0, "duplicate_off": 0, "duplicate_on": 0,
+         "D_off": 19491.0, "D_on": 10212.0}
+    r = c5({"fault_20s": {"unpaired_means": m}})
+    assert r["verdict"] == "fail" and r["directions"]["fault_20s"] == {"recovery": True, "useful_work": False,
+                                                                      "ordinary_users": True}
+    assert c5({})["verdict"] == "insufficient_evidence"
+
+
+def test_summarize_judges_only_the_named_fingerprint(tmp_path):
+    from analysis.experiment import summarize
+    for i, fp in enumerate(["sha256:aaa", "sha256:aaa", "sha256:bbb"], 1):
+        d = tmp_path / f"tr_{i:04d}"
+        d.mkdir()
+        (d / "trial.json").write_text(json.dumps({"final_state": "COMPLETE", "block": 1, "label": "x"}))
+        (d / "verdict.json").write_text(json.dumps({"trial_id": d.name, "status": "valid", "condition": "agent",
+                                                    "gate": "off", "config_hash": fp, "compat_fingerprint": fp,
+                                                    "fault": {"duration_s": 10, "enabled": True}}))
+    mixed = summarize(tmp_path)
+    assert mixed["acceptance"]["overall"] == "insufficient_evidence" and mixed["problems"]
+    one = summarize(tmp_path, fingerprint="sha256:aaa")
+    assert not one["problems"] and [e["trial_id"] for e in one["excluded"]] == ["tr_0003"]
 
 
 def test_decision_rules_put_gate_not_needed_first(tmp_path, capsys, monkeypatch):

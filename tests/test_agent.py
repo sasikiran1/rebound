@@ -109,6 +109,12 @@ async def test_final_message_without_write_is_gave_up(tmp_path):
     assert out.end_reason == "gave_up"
 
 
+async def test_output_dropped_by_the_runtime_is_labeled_not_a_plain_give_up(tmp_path):
+    dropped = NS(id="resp_1", status="completed", usage=usage(), output=[], dropped_output=True)
+    out, _ = await run(tmp_path, [dropped])
+    assert out.end_reason == "gave_up" and out.limit == "runtime_dropped_output"
+
+
 async def test_provider_failure_ends_goal(tmp_path):
     from tests.test_provider import status_error
 

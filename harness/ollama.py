@@ -137,7 +137,10 @@ class OllamaResponses:
                              arguments=args if isinstance(args, str) else json.dumps(args)))
         prompt_n, out_n = body.get("prompt_eval_count") or 0, body.get("eval_count") or 0
         status = "incomplete" if body.get("done_reason") == "length" else "completed"
-        return NS(id=f"ollama_{k}", status=status, output=output,
+        # Tokens were generated but neither text nor a tool call came back: the runtime's tool-call parser consumed
+        # the output (seen with Mistral Nemo calling a tool that does not exist). Not a model decision to stop.
+        dropped = out_n > 0 and not output
+        return NS(id=f"ollama_{k}", status=status, output=output, dropped_output=dropped,
                   done_reason=body.get("done_reason"), server_s=res.get("elapsed_s"),
                   context_used=prompt_n + out_n, num_ctx=self.options.get("num_ctx"),
                   usage=NS(input_tokens=prompt_n, output_tokens=out_n,

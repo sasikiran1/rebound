@@ -79,6 +79,15 @@ async def test_think_none_omits_the_field_and_length_is_incomplete():
     assert "think" not in relay.sent[0][1] and resp.status == "incomplete" and resp.done_reason == "length"
 
 
+async def test_tokens_without_text_or_tool_call_are_flagged_as_dropped():
+    # Mistral Nemo: 73 tokens generated, empty message (the parser consumed a call to a nonexistent tool)
+    reply = body(content="")
+    reply["body"]["eval_count"] = 73
+    resp = await create(FakeRelay(reply))
+    assert resp.output == [] and resp.dropped_output is True
+    assert (await create(FakeRelay(body(content="done")))).dropped_output is False
+
+
 async def test_ollama_error_becomes_provider_failed_without_retry():
     relay = FakeRelay({"ok": False, "status": 500, "error": "CUDA error", "elapsed_s": 1.0})
     with pytest.raises(ProviderFailed) as e:
