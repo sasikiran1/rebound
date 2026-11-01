@@ -75,6 +75,44 @@ def test_wrongly_deferred():
     assert classify(FEASIBLE, untouched(), "deferred") == "wrongly_deferred"
 
 
+AFTERNOON = {**FEASIBLE, "constraint": {"kind": "start_hour", "from_h": 15, "to_h": 16}}
+TECH = {**FEASIBLE, "constraint": {"kind": "technician", "technician_id": 384}}
+EXACT = {**FEASIBLE, "constraint": {"kind": "exact_slot", "slot_id": 42}}
+
+
+def test_start_hour_constraint():
+    at = lambda h, m=0: dt.datetime(2026, 11, 6, h, m)  # noqa: E731
+    assert classify(AFTERNOON, moved(starts_at=at(15)), "rescheduled") == "correct"
+    assert classify(AFTERNOON, moved(starts_at=at(15, 30)), "rescheduled") == "correct"
+    assert classify(AFTERNOON, moved(starts_at=at(8)), "rescheduled") == "incorrect"  # qwen3-14b's 08:00 booking
+    assert classify(AFTERNOON, moved(starts_at=at(16)), "rescheduled") == "incorrect"  # upper bound exclusive
+
+
+def test_technician_and_exact_slot_constraints():
+    assert classify(TECH, moved(technician_id=384), "rescheduled") == "correct"
+    assert classify(TECH, moved(technician_id=19), "rescheduled") == "incorrect"
+    assert classify(EXACT, moved(), "rescheduled") == "correct"
+    assert classify(EXACT, moved(slot_id=43, last_change_to_slot=43), "rescheduled") == "incorrect"
+
+
+def test_task_without_constraint_ignores_time_and_technician():
+    assert classify(FEASIBLE, moved(starts_at=dt.datetime(2026, 11, 6, 8), technician_id=1), "rescheduled") == "correct"
+
+
+def test_deferral_correct_when_nothing_acceptable_is_still_free():
+    # race loser: the competitor took the only acceptable slot
+    assert classify(EXACT, untouched(satisfying_free=0), "deferred") == "correct"
+    assert classify(EXACT, untouched(satisfying_free=1), "deferred") == "wrongly_deferred"
+    assert classify(AFTERNOON, untouched(satisfying_free=16), "deferred") == "wrongly_deferred"
+    assert classify(FEASIBLE, untouched(satisfying_free=None), "deferred") == "wrongly_deferred"  # not computed
+
+
+def test_unknown_constraint_kind_raises():
+    from oracle.verdicts import meets_constraint
+    with pytest.raises(ValueError):
+        meets_constraint({"constraint": {"kind": "weekday"}}, 1, None, None)
+
+
 @pytest.mark.parametrize(
     "end_reason,verdict",
     [("gave_up", "failed"), ("limit_reached", "failed"), ("unfinished", "unfinished"), ("rejected", "rejected"),

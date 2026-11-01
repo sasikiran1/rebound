@@ -374,3 +374,108 @@ Replay of tr_0002's agent trace (which includes that trial's fault reactions; me
 valid, 228/228 correct, 940 requests replayed open-loop, attempts per goal in the fault cohort 4.45 (identical to
 the source trace), T_rec 21 s, D 8,428.
 
+
+## Audit verification (Wed Oct 28, 00:00 ET; branch `audit-fixes`, no model spend, no new trials)
+
+External audit of HEAD 5694a04 (2026-10-27) checked against the code and the saved bundles. Baseline before any edit:
+77 tests passed, ruff clean, no `sleep` in `backend/`, clean tree, 21 commits.
+
+### Findings confirmed and fixed or bounded
+
+| Finding | Status | Measured evidence |
+|---|---|---|
+| full_history drops reasoning context | Confirmed (agent.py visible-text-only replay); new `stateless_reasoning` mode | unit tests only; needs a live smoke check |
+| Summary pools configurations | Confirmed: the old summary pooled four gate settings (tr_0004–07) into one cell, put tr_0001 (think 10.1 s) and tr_0003 (10.25 s) together, and paired tr_0002 (stored, gate off) with tr_0014 (full_history, gate on) as an acceptance pair that passed c3 and c4 | the 9 valid explore-v1 trials span 8 configuration hashes; the new summary refuses to judge |
+| Checksum failure still yields a report | Confirmed; now fails closed | one flipped word in tr_0002's `oracle.jsonl` → INTEGRITY FAILURE, exit 1, nothing written |
+| Provenance omits oracle, schema, generator, lockfile | Confirmed; config_hash v2 covers them, analyzer has its own fingerprint | regression test |
+| Missing baseline passes c1; no c5 | Confirmed; five explicit pass/fail/insufficient verdicts | regression tests |
+| `applied_at` labeled commit time | Confirmed but bounded: it is `clock_timestamp()` of the INSERT, one round trip before COMMIT (about 400 ms in the fault). Renamed `change_inserted_at`; FieldDesk now logs commit acknowledgment | – |
+| Scripted v1 is a weak baseline | Confirmed: abandons after the first read fails 3 times (7 and 5 goals lost in tr_0001, tr_0003). New `robust_v2` | unit tests |
+| Replay overclaimed | Confirmed (tr_0008 replays a faulted trace). Replay now checks its reference; explore_replay marked mechanics-only | – |
+| Goals barely load the API | Confirmed for the fault window itself (below) | – |
+| DB ms is not DB work | Confirmed; relabeled "DB round-trip elapsed ms" | – |
+
+### Re-analysis of saved bundles (key-free, `make verify RUN=runs/explore-v1`)
+
+13 of 14 bundles pass their raw checksums and reproduce every saved version 1 result exactly (status, T_rec,
+recovery verdict, unhealthy seconds, goal verdicts, S, D, background references, retry classes, model cost, gate
+decisions). tr_0010 (runner crashed, already INVALID) cannot be analyzed: its last JSONL line is truncated.
+
+### Fault-window exposure (who held the API, metrics_version 2)
+
+| Trial | Client, gate | Goal share of in-flight time, fault | Goal share of DB round-trip ms, fault | Goal requests in the fault (refused) |
+|---|---|---|---|---|
+| tr_0001 / tr_0003 | scripted v1, off | 0.33% / 0.30% | 0.13% / 0.11% | 25 / 23 |
+| tr_0002 | agent stored, off | 0.31% | 0.09% | 15 |
+| tr_0004–tr_0007 | scripted v1, on | 0–0.44% | 0–0.02% | 30 (30) in tr_0007 |
+| tr_0011–tr_0013 | agent stored, on (inconclusive) | 0–0.88% | 0% | 14–18 (all refused) |
+| tr_0014 | agent full_history, on | 1.70% | 2.70% | 82 (80) |
+
+Background traffic held at least 98% of the API's in-flight time during every fault. At this load no goal client can
+move recovery much; T_rec and D differences between client conditions are not attributable to the clients.
+
+### Back-pressure (Retry-After) compliance, new
+
+| Trials | Client | Too-early requests after a Retry-After refusal | Median gap |
+|---|---|---|---|
+| tr_0004–tr_0007 | scripted v1 | 0 of 97 | 2.0 s |
+| tr_0011–tr_0013 | agent, previous_response_id | 0 of 50 | 8.6–9.0 s |
+| tr_0014 | agent, full_history | 84 of 84 (10 goals) | 0.77 s |
+
+Slow agents complied only because a model call took longer than Retry-After. The tool interface has no way to wait.
+Witness g_0083 (tr_0014): 12 refusals in 9.4 s, five calls to the expensive search, tool budget exhausted, oracle
+`failed`. These are exploratory observations from one trial under the old context mode; `docs/screening_v2.md`
+predeclares the test that can confirm or refute them.
+
+Tests after the changes: 115 passed (38 new), ruff clean, no-sleep check clean.
+
+## Evaluation eval-v1 (task set B, Wed Oct 28, 14:40–17:50 ET; `runs/eval-v1`)
+
+Frozen at `81c912f`, recorded in `docs/FREEZE.md` (`1d79325`) before the first trial. 18 of 18 trials valid, every
+bundle's SHA256SUMS intact. Re-analysis with the merged analyzer (metrics_version 2, `make verify`-style,
+`runs/eval-v1/reanalysis_v2.log`) reproduced every saved verdict exactly. Model spend $19.81 of a $20 cap
+(cumulative $33.85). Pacing: full_history, 0.4 goals/s to 490 s (209 goals per trial), observation 300 s.
+
+### Headline cells (10 s, 400 ± 50 ms fault; three blocks)
+
+| Cell | T_rec block 1 / 2 / 3 (s) | Lost background service D | Correct of 209 | Other outcomes |
+|---|---|---|---|---|
+| agent, gate off | 22 / 21 / 20 | 8,417 / 7,979 / 7,882 | 209 / 209 / 209 | — |
+| agent, gate on | 10 / 10 / 10 | 5,176 / 5,030 / 5,011 | 208 / 208 / 208 | 1 failed each |
+| scripted, gate off | 21 / 22 / 21 | 8,064 / 8,503 / 8,195 | 205 / 205 / 206 | 3–4 failed |
+| scripted, gate on | 10 / 10 / 10 | 5,013 / 5,049 / 5,066 | 202 / 203 / 202 | 4 rejected, 2–3 failed |
+| replay, gate off | 28 / 22 / 20 | 7,663 / 8,712 / 7,897 | 209 / 209 / 209 | — |
+| reference (agent, no fault) | 1 | 7 | 209 | — |
+
+T_rec has a floor of about 10 s (the 10 s trailing window still holds fault-period requests), so "10" means
+recovered at once. Amplification vs replay (HTTP attempts per goal, fault cohort): agents 1.25, scripted 1.09.
+
+### Acceptance (judged on agent cells)
+
+| Criterion | 10 s fault (3 paired blocks) | 20 s unfamiliar fault (tr_0017 off, tr_0018 on) |
+|---|---|---|
+| C1 healthy overhead | pass: baseline S unchanged, background p95 −0.3%, baseline rejections 0 | pass |
+| C2 recovery | pass, both arms `fast` → **gate not needed** at 10 s | 34 s (`slow`) → 10 s |
+| C3 useful work | pass: −1 correct per block, 0 incorrect, 0 duplicate | **−8 correct** (201 vs 209: 4 failed, 4 rejected) |
+| C4 ordinary users | pass: D −36% to −39% | D 19,491 → 10,212 (−48%) |
+| C5 direction under the unfamiliar fault | — | frozen-time analyzer: **fail** (useful work). Merged analyzer: **insufficient evidence**, because tr_0018 ran from `manifests/frozen/eval_v1_cap252.yaml`, which differs only in `trial_budget_usd` (2.52 instead of 10, to hold the $20 cap; it never triggered, spend $2.31) and so has a different compatibility fingerprint |
+
+### Back-pressure (merged analyzer; requests sent before an earlier 503's Retry-After expired)
+
+| Trials | Client | Too early |
+|---|---|---|
+| tr_0004, tr_0010, tr_0016 (gate on, 10 s) | agent | 69 of 69, 74 of 74, 68 of 68 |
+| tr_0018 (gate on, 20 s) | agent | 139 of 139 |
+| tr_0003, tr_0007, tr_0013 (gate on, 10 s) | scripted v1 | 3 of 23 each |
+
+Agents ignored Retry-After every time, at a model step of about 0.8 s; this repeats the tr_0014 observation in
+three frozen blocks and the unfamiliar fault. Goal clients held 0.4–1.9% of in-flight time during the fault, so the
+extra requests did not move recovery; their cost fell on the agents' own goals (1 lost per gate-on trial at 10 s,
+8 at 20 s). That the violations caused those losses is inference: no trial tested a Retry-After guard
+(`--retry-after-guard`, merged from `audit-fixes`), so the guard's effect is unmeasured.
+
+### What this means
+
+At a 10 s fault the system recovers fast on its own; the gate still spares ordinary users about 3,000 failed requests
+for 1 lost goal. At 20 s the gate is needed for recovery and halves lost service, but costs about 4% of correct agent
+goals. The agent-specific, measured behavior is total non-compliance with Retry-After.

@@ -205,11 +205,13 @@ async def scenario_check(conn, t: dict, seen: list[dict], outcome, feasible_befo
         booked = dict(r)
     feasible_after = [x["id"] for x in await candidates(conn, t) if satisfies(t, x)]
     sat_ids = set(feasible_before)
-    visible = sorted({s["slot_id"] for e in seen for s in (e["result"].get("slots") or []) if s.get("slot_id") in sat_ids})
+    visible = sorted({s["slot_id"] for e in seen for s in (e["result"].get("slots") or [])
+                      if s.get("slot_id") in sat_ids})
     tool_errors = [e["result"]["error"]["type"] for e in seen if "error" in e["result"]]
     ctx_exhausted = any(c.get("done_reason") == "length" and (c.get("context_used") or 0) >= cfg_ctx - 8
                         for c in model_calls)
-    out_limit = any(c.get("done_reason") == "length" and (c.get("output_tokens") or 0) >= cfg_predict for c in model_calls)
+    out_limit = any(c.get("done_reason") == "length" and (c.get("output_tokens") or 0) >= cfg_predict
+                    for c in model_calls)
     names = [e["tool"] for e in seen]
     readback = "reschedule_appointment" in names and "get_appointment" in names[names.index("reschedule_appointment"):]
     violated = []
@@ -233,14 +235,18 @@ async def scenario_check(conn, t: dict, seen: list[dict], outcome, feasible_befo
         cls = "correct_deferral" if not feasible_after else "wrong_deferral_feasible"
     elif outcome.end_reason == "provider_failed":
         cls = "model_runner_failure"
-    elif ctx_exhausted:
-        cls = "feasible_not_completed:context_window_exhausted"
-    elif out_limit:
-        cls = "feasible_not_completed:output_token_limit"
-    elif outcome.end_reason == "limit_reached":
-        cls = f"feasible_not_completed:{outcome.limit}_limit"
     else:
-        cls = "feasible_not_completed:" + outcome.end_reason
+        # No write and no deferral: a feasible task was not completed, or an infeasible one ended without the
+        # required deferral (earlier runs labeled both "feasible_not_completed"; corrected 2026-10-28).
+        prefix = "feasible_not_completed" if feasible_before else "infeasible_no_deferral"
+        if ctx_exhausted:
+            cls = f"{prefix}:context_window_exhausted"
+        elif out_limit:
+            cls = f"{prefix}:output_token_limit"
+        elif outcome.end_reason == "limit_reached":
+            cls = f"{prefix}:{outcome.limit}_limit"
+        else:
+            cls = f"{prefix}:{outcome.end_reason}"
     return {"class": cls, "violated": violated, "booked": {k: str(v) for k, v in booked.items()} if booked else None,
             "changes": len(changes), "feasible_before": len(feasible_before), "feasible_after": len(feasible_after),
             "satisfying_slots_visible_to_model": visible, "tool_errors": tool_errors,
@@ -290,7 +296,7 @@ async def run_case(m, model, setting, case_name, case, out: Path, cases_meta: di
     conn = await asyncpg.connect(settings.oracle_dsn())
     rows = []
     try:
-        for i, (t, o, ad) in enumerate(zip(goal_tasks, outs, adapters), 1):
+        for t, o, ad in zip(goal_tasks, outs, adapters, strict=True):
             mc = model_calls_of(folder, o.goal_id)
             check = await scenario_check(conn, t, ad.seen, o, before[t["task_id"]], opts["num_ctx"], predict, mc)
             if is_race and check["class"] == "correct_deferral":
@@ -333,7 +339,7 @@ async def main() -> None:
     await conn.close()
     (out / "cases.json").write_text(json.dumps(cases, indent=2, default=str))
     (out / "plan.json").write_text(json.dumps(plan, indent=2))
-    for name, (t, meta) in cases.items():
+    for name, (_task, meta) in cases.items():
         print("CASE", name, json.dumps({k: v for k, v in meta.items() if k != "feasible_ids"}, default=str),
               "feasible", len(meta["feasible_ids"]), flush=True)
     rows = []

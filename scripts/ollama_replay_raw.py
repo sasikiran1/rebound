@@ -8,13 +8,14 @@ This is a diagnostic of the runtime integration, not an agent run: no tool is ex
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 sys.path.insert(0, ".")
 from harness.ollama import Relay  # noqa: E402
 
 
 async def main() -> None:
-    rec = json.loads(open(sys.argv[1]).read())
+    rec = json.loads(Path(sys.argv[1]).read_text())  # noqa: ASYNC240 - one small file before any request
     payload = rec["request"]
     if "--no-tools" in sys.argv:
         payload = {k: v for k, v in payload.items() if k != "tools"}

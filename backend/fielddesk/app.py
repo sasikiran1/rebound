@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -17,7 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from fielddesk.db import db
+from fielddesk.db import current_stats, db
 from fielddesk.gate import Gate, GateMiddleware
 from fielddesk.requestlog import RequestLogMiddleware, counters
 from fielddesk.sampler import Sampler
@@ -400,7 +401,11 @@ async def reschedule(
                     "VALUES ($1, $2, $3, $4) RETURNING id, appointment_id, from_slot_id, to_slot_id, applied_at",
                     appointment_id, appt["slot_id"], body.slot_id, idempotency_key,
                 )
-                return change_json(change, replayed=False)
+            # The transaction block exited normally: COMMIT has returned. Logged even if the client already gave up.
+            stats = current_stats.get()
+            if stats is not None:
+                stats.commit_ack_mono_ns, stats.change_id = time.monotonic_ns(), change["id"]
+            return change_json(change, replayed=False)
     except asyncpg.UniqueViolationError as exc:
         if exc.constraint_name == SLOT_CONFLICT:
             raise ApiError(409, "slot_taken", f"slot {body.slot_id} is already booked") from exc

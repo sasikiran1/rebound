@@ -91,9 +91,9 @@ def cell(v):
     return "–" if v is None else v
 
 
-def build(exp_dir: str | Path) -> Path:
+def build(exp_dir: str | Path, fingerprint: str | None = None) -> Path:
     exp_dir = Path(exp_dir)
-    s = summarize(exp_dir)
+    s = summarize(exp_dir, fingerprint=fingerprint)
     (exp_dir / "summary.json").write_text(json.dumps(s, indent=2, default=str) + "\n")
     df = pd.DataFrame(s["trials"])
     figs = []
@@ -117,4 +117,5 @@ def build(exp_dir: str | Path) -> Path:
 
 
 if __name__ == "__main__":
-    print(build(sys.argv[1]))
+    # optional second argument: the compatibility fingerprint (or a prefix of it) to judge; other trials are listed
+    print(build(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None))

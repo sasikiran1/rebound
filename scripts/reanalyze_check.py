@@ -31,10 +31,8 @@ for arg in sys.argv[1:]:
     if bad:
         print(d.name, "SKIPPED integrity", bad[:3])
         continue
-    new = json.loads(json.dumps(analyze(d), default=str))
     out = d / "reanalysis"
-    out.mkdir(exist_ok=True)
-    (out / "verdict.json").write_text(json.dumps(new, indent=2) + "\n")
+    new = json.loads(json.dumps(analyze(d, out), default=str))  # writes only into reanalysis/
     saved_p = d / "verdict.json"
     if not saved_p.exists():
         print(d.name, "no saved verdict; reanalysis status", new["status"], new.get("invalid_reasons"),
