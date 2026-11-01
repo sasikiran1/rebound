@@ -1,6 +1,6 @@
 """Constraint-semantics reproduction with live local Ollama agents (no fault, no gate, no background traffic).
 
-Usage: python scripts/ollama_semantic.py <out_dir> <plan.json>
+Usage: python scripts/local_models/ollama_semantic.py <out_dir> <plan.json>
 
 Every case runs the repository's own agent loop (harness.agent.run_goal) against a freshly cloned database and a
 freshly restarted FieldDesk. Scenarios are built here from SQL on fielddesk_template, independently of any earlier

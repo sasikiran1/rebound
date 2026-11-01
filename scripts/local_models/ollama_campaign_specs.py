@@ -1,6 +1,6 @@
 """Write the recovery-campaign manifests and trial lists from docs/ollama_protocol.md (no hand-typed values).
 
-Usage: python scripts/ollama_campaign_specs.py
+Usage: python scripts/local_models/ollama_campaign_specs.py
 Reads the ctx16k semantic results for both campaign models, applies the declared arrival-rate rule
 (0.35 / (C x L) of the slower model, rounded down to 0.01; C = median model calls per goal, L = median model-call
 latency excluding each goal's first call, which includes model loading), then writes:

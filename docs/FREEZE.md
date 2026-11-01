@@ -10,3 +10,9 @@ Recorded before the first evaluation trial, on 2026-10-28.
 - Spend before the evaluation: $14.04 recorded in trial bundles (about $14.06 with untracked single-goal smoke calls).
   Cap for the evaluation: $20 more, cumulative $34.06 across all trial bundles.
 - Anything changed after this commit is a new configuration and needs new trials.
+
+## Note added 2026-10-31
+
+The history was rewritten on 2026-10-31 (see docs/commit_map.txt for where each recorded hash now points). Two
+early planning-notes files were removed from every commit and comment lines that cited them were updated; no other
+file content changed.
