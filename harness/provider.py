@@ -8,9 +8,9 @@
 |   found or expired"          |                                                 |
 | 504, other 400, anything else| no retry -> ProviderFailed                      |
 
-Deviation from docs/spec.md (recorded in docs/results.md): from exploration trial tr_0011 on, the provider returned
-400 "referenced response not found or expired" for continuations sent about 1 s after the referenced response was
-created (a stored-response read-after-write race; never at a real expiry age). It is retried like a 503.
+Deviation from the original design (recorded in docs/results.md): from exploration trial tr_0011 on, the provider
+returned 400 "referenced response not found or expired" for continuations sent about 1 s after the referenced
+response was created (a stored-response read-after-write race; never at a real expiry age). It is retried like a 503.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ BACKOFF_BASE_S = 1.0
 BACKOFF_CAP_S = 30.0
 RETRY_AFTER_CAP_S = 60.0
 
-# USD per 1M tokens: (uncached input, cached input, output incl. reasoning). the design.
+# USD per 1M tokens: (uncached input, cached input, output incl. reasoning).
 # Contributor tier (Meta may train on prompts; lower rate limit): $0.10 / $0.002 / $0.20 per 1M, per Meta's pricing page
 # as cited in the 2026-10-27 audit and LiteLLM's Muse Spark 1.3 launch note. It was priced as Standard before.
 PRICES = {

@@ -1,6 +1,6 @@
 # Rebound — Agent Recovery Gate: Design Specification
 
-> **Note for builders:** this is the full design specification, exported October 27, 2026. The project now uses a lean one-laptop build. Where this document disagrees with `docs/spec.md` (two laptops, the control API and web UI, cost-weighted gate, seven retry classes, metastability classes, DuckDB/Parquet, client-managed history), **`docs/spec.md` wins**.
+> **Note for builders:** this is the full design specification, exported October 27, 2026. The project now uses a lean one-laptop build. Where this document disagrees with the code and `docs/protocol.md` (two laptops, the control API and web UI, cost-weighted gate, seven retry classes, metastability classes, DuckDB/Parquet, client-managed history), **the code and `docs/protocol.md` win**.
 
 Oct 27, 2026 · @Sasi
 

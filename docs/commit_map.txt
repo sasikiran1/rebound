@@ -1,51 +1,51 @@
 # Commit map
 #
-# The repository history was rewritten on 2026-10-31 (commit messages tidied; the build plan renamed to
-# docs/spec.md and its citations updated). Commit dates are unchanged; hashes changed. Hashes recorded before
-# that date, in trial bundles (manifest repo_sha), docs/FREEZE.md and docs/OLLAMA_FREEZE.md, map to current
-# commits here. Format: <recorded hash> <current hash> <subject>
+# The repository history was rewritten on 2026-10-31 (commit messages tidied; two early planning-notes files
+# removed and the comments citing them updated). Commit dates are unchanged; hashes changed. Hashes recorded
+# before that date, in trial bundles (manifest repo_sha), docs/FREEZE.md and docs/OLLAMA_FREEZE.md, map to
+# current commits here. Format: <recorded hash> <current hash> <subject>
 
-5694a04 034fa3f Remove draft frozen manifest and plan: settings superseded, freeze not yet made 
-24ea881 07f0f6b Record pacing-sample hash; tests for replay reference checks and step-gap pacing 
-28f4e9b 0aa58e6 Constraint-aware oracle, C5 acceptance, fail-closed re-analysis, measured cost estimate, tests 
-f23095f 0bc53b8 Record Day 1 measurements: per-endpoint DB time, pulse effect, offline pipeline check 
-3af7c23 10d9eca Campaign manifests and specs by the declared rate rule (gemma4 only after the llama3.1 entry check failed) 
-816e404 1a12b29 Provider: retry the not-yet-stored 400 on previous_response_id continuations (1, 2, 4 s) 
-d2a421c 1d9fa11 Calibrate: step test, healthy scripted trial, proxy overhead; experiment analysis, protocol draft, queue script 
-1d79325 1fe8168 Record the eval-v1 freeze commit before the first evaluation trial 
-56927b9 20c0c2d Recovery contract v1: PASS / FAIL / INSUFFICIENT_EVIDENCE with witness IDs 
-c8452ea 29c8a67 Freeze ollama-recovery-v1 before block 1 
-2814f17 35572ed Post-freeze: zero-goal analysis fix (background-only trials), resume list after host crash 
-2f99e01 3791de9 Screening v2: stateless smoke check, per-trial treatments, mechanical decision 
-92233db 4623506 Evidence integrity and fair controls (audit 2026-10-27, findings 2-5, 7, 8) 
-8059ee6 49f0434 Add compose: digest-pinned postgres 16 and toxiproxy 2.12, fielddesk via pg proxy, read-only oracle role, cpusets 
-e45c428 4e97bd3 Merge audit-fixes: evidence integrity, contracts, back-pressure metrics, Retry-After guard, robust scripted client 
-009a3be 518fa3f Local Ollama agents: relay, Responses-shaped client, background-only arm, pg CPU sampler, semantic and campaign tooling 
-3cc1af1 58e89cc Record host-disk-full incident, add mark-crashed cleanup and disk-space preflight 
-81c912f 5bf59cf Freeze evaluation eval-v1: manifest, protocol, run list, spend-capped runner 
-6f72987 5d6cd87 Evaluation write-up: results, limitations, README; stable fingerprints for old bundles 
-88055d7 5ecad77 Add tool adapter, tools_v1 schemas, agent_v1 prompt and event envelope, with adapter tests 
-d7a57a3 64f1ecd Agent: full_history continuation (store=False) as a manifest option; exploration switches to it 
-d9387a2 69875b4 Exploration results, gate grid manifests, freeze and plan scripts 
-cfe2511 6e67ce5 Decision rules: use the one valid trial per arm (crash rerun) 
-be0e112 756e972 Add Toxiproxy control, 1 Hz canary, make pulse and per-endpoint DB-time probe; count pool reset as DB time 
-142053e 9c5d914 scripts/screen_v2.sh: run one predeclared screening block in its seeded order 
-d3e2b27 9da4c52 Add full workflow and trial runner: search and technicians endpoints, gate, sampler, controller, clients, analysis 
-a150d54 a01a01a Add repo skeleton: uv project, Makefile, CI with ruff, pytest and no-sleep check 
-d8bcd35 ab25e7e Commit acknowledgment, back-pressure compliance and exposure metrics (findings 6, 9, 10) 
-7c193a4 adb00a9 Record gate grid and replay test; fix replay trace step keys 
-1cb4519 b1c2744 Record provider store loss, full-history validation and the latency/pacing change; freeze on hold 
-bb5a450 b31d43d Load gitignored .env in Makefile so MODEL_API_KEY reaches the runner 
-2cd8cba bb40a30 Add FieldDesk core endpoints with per-request DB time, query count and JSONL request log 
-9547ff3 bf09fd1 Agent: stateless_reasoning continuation that keeps reasoning context (audit finding 1) 
-b312665 c184911 Add provider wrapper (Meta error table), live agent loop with previous_response_id and per-goal limits, verify-model and goal commands 
-1bb5c69 ce4d369 Import design docs, rename project to Rebound, record Day 1 environment 
-888e0c8 cebc652 Tool-information intervention plan and raw-replay diagnostic 
-775ab27 d0dad84 Release packaging, clean-clone reproduction check, tamper demo and demo script 
-cd6b01b d618cc7 Docs: record audit verification, predeclare screening v2, correct claims 
-8f0d727 de453b9 Engineering decision record (2026-10-28): verified findings, NARROW, plan, demo, scores 
-00a4186 df46b7b Add schema, seeded generator (1/10 scale), non-interfering task set A, clone-and-verify 
-48e8d3c e37455d Freeze record: file hashes (previous commit wrote an empty table) 
-75ae3c0 ead10b8 Record Day 1 live run: model verification, one live goal verified correct by the oracle 
-7b409e1 effdfea Add SQL oracle with verdict classes and tests 
-2dfdecd f698ad2 Label runtime-dropped model output; next-configuration draft with the time-filter tools 
+1bb5c69 e82c51b Import design docs, rename project to Rebound, record Day 1 environment
+a150d54 5e43b4b Add repo skeleton: uv project, Makefile, CI with ruff, pytest and no-sleep check
+8059ee6 37f3ede Add compose: digest-pinned postgres 16 and toxiproxy 2.12, fielddesk via pg proxy, read-only oracle role, cpusets
+00a4186 c667746 Add schema, seeded generator (1/10 scale), non-interfering task set A, clone-and-verify
+2cd8cba fe838ba Add FieldDesk core endpoints with per-request DB time, query count and JSONL request log
+be0e112 3547e4e Add Toxiproxy control, 1 Hz canary, make pulse and per-endpoint DB-time probe; count pool reset as DB time
+88055d7 22b3ada Add tool adapter, tools_v1 schemas, agent_v1 prompt and event envelope, with adapter tests
+7b409e1 07b90e5 Add SQL oracle with verdict classes and tests
+b312665 7e48d99 Add provider wrapper (Meta error table), live agent loop with previous_response_id and per-goal limits, verify-model and goal commands
+f23095f a475019 Record Day 1 measurements: per-endpoint DB time, pulse effect, offline pipeline check
+bb5a450 f359a31 Load gitignored .env in Makefile so MODEL_API_KEY reaches the runner
+75ae3c0 952a135 Record Day 1 live run: model verification, one live goal verified correct by the oracle
+d3e2b27 f348f01 Add full workflow and trial runner: search and technicians endpoints, gate, sampler, controller, clients, analysis
+d2a421c ee77515 Calibrate: step test, healthy scripted trial, proxy overhead; experiment analysis, protocol draft, queue script
+d9387a2 5c3e0ec Exploration results, gate grid manifests, freeze and plan scripts
+7c193a4 35fc95d Record gate grid and replay test; fix replay trace step keys
+3cc1af1 d6be951 Record host-disk-full incident, add mark-crashed cleanup and disk-space preflight
+816e404 5f9248e Provider: retry the not-yet-stored 400 on previous_response_id continuations (1, 2, 4 s)
+d7a57a3 00947f3 Agent: full_history continuation (store=False) as a manifest option; exploration switches to it
+1cb4519 6098d7c Record provider store loss, full-history validation and the latency/pacing change; freeze on hold
+5694a04 4d85768 Remove draft frozen manifest and plan: settings superseded, freeze not yet made
+92233db 35beb06 Evidence integrity and fair controls (audit 2026-10-27, findings 2-5, 7, 8)
+9547ff3 2a77dc1 Agent: stateless_reasoning continuation that keeps reasoning context (audit finding 1)
+d8bcd35 de57532 Commit acknowledgment, back-pressure compliance and exposure metrics (findings 6, 9, 10)
+56927b9 3ea327f Recovery contract v1: PASS / FAIL / INSUFFICIENT_EVIDENCE with witness IDs
+2f99e01 cedeee3 Screening v2: stateless smoke check, per-trial treatments, mechanical decision
+cd6b01b 8304337 Docs: record audit verification, predeclare screening v2, correct claims
+24ea881 6b40fc7 Record pacing-sample hash; tests for replay reference checks and step-gap pacing
+8f0d727 d045691 Engineering decision record (2026-10-28): verified findings, NARROW, plan, demo, scores
+142053e af0a6c3 scripts/screen_v2.sh: run one predeclared screening block in its seeded order
+009a3be f223180 Local Ollama agents: relay, Responses-shaped client, background-only arm, pg CPU sampler, semantic and campaign tooling
+888e0c8 ad4cab3 Tool-information intervention plan and raw-replay diagnostic
+3af7c23 ac33acc Campaign manifests and specs by the declared rate rule (gemma4 only after the llama3.1 entry check failed)
+c8452ea 1b676b3 Freeze ollama-recovery-v1 before block 1
+48e8d3c 413ad4c Freeze record: file hashes (previous commit wrote an empty table)
+2814f17 0200cb6 Post-freeze: zero-goal analysis fix (background-only trials), resume list after host crash
+cfe2511 be7cf2d Decision rules: use the one valid trial per arm (crash rerun)
+81c912f 279b70b Freeze evaluation eval-v1: manifest, protocol, run list, spend-capped runner
+1d79325 1f22c9b Record the eval-v1 freeze commit before the first evaluation trial
+28f4e9b 32f9765 Constraint-aware oracle, C5 acceptance, fail-closed re-analysis, measured cost estimate, tests
+e45c428 f5fcd55 Merge audit-fixes: evidence integrity, contracts, back-pressure metrics, Retry-After guard, robust scripted client
+2dfdecd 16ad6ce Label runtime-dropped model output; next-configuration draft with the time-filter tools
+6f72987 5af475a Evaluation write-up: results, limitations, README; stable fingerprints for old bundles
+775ab27 8dea439 Release packaging, clean-clone reproduction check, tamper demo and demo script

@@ -86,7 +86,7 @@ One paid model, one workflow, one fault type, one gate setting, one deliberately
 
 ## Repository
 
-See [`docs/spec.md`] for the build rules and [`docs/spec.md`](docs/spec.md) for the full design specification.
+See [`docs/spec.md`](docs/spec.md) for the full design specification and [`docs/protocol.md`](docs/protocol.md) for the frozen evaluation rules.
 
 ## License
 

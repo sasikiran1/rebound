@@ -33,7 +33,7 @@ HEAD 5694a04. The six integrity regression tests below were written first and **
 | 10 | DB elapsed ≠ DB work | **Confirmed** | db.py times round trips through Toxiproxy | "DB ms per goal" is mostly injected latency during the fault | Relabeled "DB round-trip elapsed ms (includes proxy latency; not DB CPU)" everywhere |
 
 Audit statements corrected: finding 6's error is bounded to one round trip (clock_timestamp, not transaction start).
-The Contributor-tier rate limit is 150 RPM in docs/spec.md and 100 RPM in LiteLLM's launch note; unresolved and
+The Contributor-tier rate limit is 150 RPM in the original design and 100 RPM in LiteLLM's launch note; unresolved and
 irrelevant, since that tier is not used. The audit's own recomputation is confirmed and extended: **13 of 14 bundles
 pass raw checksums and reproduce every saved version 1 result exactly**; tr_0010 (runner crash, already INVALID) has
 a truncated last line and cannot be analyzed.

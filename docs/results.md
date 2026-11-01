@@ -170,7 +170,7 @@ tasks in a set share a (region, service, date)), infeasible tasks stay infeasibl
 blocker appointments never shrink another task's candidates. Consequence: concurrent goals can race for one slot.
 Measured in the healthy scripted calibration trial: 6 HTTP 409s in 228 goals, all resolved by the re-check.
 
-**Availability is public (changed from Day 1).** the design scopes reads to "the goal's customer and region
+**Availability is public (changed from Day 1).** The design scopes reads to "the goal's customer and region
 set, plus public availability". The adapter now allows any region for `check_day_availability`,
 `search_availability` and `list_technicians`; customer and appointment reads and the write stay scoped to the goal.
 
