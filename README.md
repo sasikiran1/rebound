@@ -4,7 +4,7 @@
 
 APIs are increasingly called by AI agents rather than by fixed scripts. Agents react to errors in ways nobody wrote down: they retry, switch to more expensive endpoints, broaden searches or start over. Rebound measures what that does to an API's recovery after a brief dependency fault. It also tests whether one server-side admission gate helps without throwing away useful work.
 
-> Status: in development for the Meta Global AI Developer Hackathon 2026 (Indie track), Oct 26 – Nov 4, 2026. Results below are filled in from measured trials only.
+> Built for the Meta Global AI Developer Hackathon 2026 (Indie track), Oct 26 – Nov 4, 2026. The frozen evaluation (18 trials, all valid) ran on Oct 28. Results below are measured values only.
 
 ## What it does
 
@@ -57,7 +57,22 @@ make trial MANIFEST=manifests/frozen/eval_v1.yaml CONDITION=agent GATE=off REPEA
 
 ## Results
 
-*To be measured.* Every evaluation trial, including invalid ones, will be listed in [`docs/results.md`](docs/results.md), with per-trial values rather than best runs. Exploratory observations so far (not confirmed): at this load goal clients held under 2% of the API's in-flight time during the fault, so client behavior could not move recovery; and agents answered Retry-After too early whenever a model call was faster than Retry-After (84 of 84 refusals in one trial, 0 of 50 when calls took about 9 s). The predeclared test is in [`docs/screening_v2.md`](docs/screening_v2.md).
+Frozen evaluation `eval-v1`: Muse Spark 1.3 agents, task set B, three paired blocks plus one unfamiliar 20 s fault pair. Every trial, per block, is in [`docs/results.md`](docs/results.md).
+
+| | Gate off | Gate on |
+|---|---|---|
+| Recovery time after a 10 s fault (T_rec, 3 blocks) | 22 / 21 / 20 s | 10 / 10 / 10 s (the metric's floor) |
+| Lost ordinary-user requests after a 10 s fault | 7,882–8,417 | 5,011–5,176 |
+| Correct agent goals of 209 (10 s fault) | 209 each | 208 each |
+| Recovery after the unfamiliar 20 s fault (1 pair) | 34 s, `slow` | 10 s |
+| Lost ordinary-user requests, 20 s fault | 19,491 | 10,212 |
+| Correct agent goals of 209, 20 s fault | 209 | 201 |
+| Agent requests sent before Retry-After expired | — | 100% (69/69, 74/74, 68/68; 139/139 at 20 s) |
+
+- **A short fault does not need the gate:** both arms recover fast, so by the frozen rules the gate is not needed at 10 s. It still spares ordinary users about 3,000 failed requests for one lost goal.
+- **A longer fault does, with a cost:** at 20 s the gate halves lost service and restores health at once, but agents lose 8 correct goals (beyond the predeclared limit of 3; one trial pair, weaker evidence).
+- **Agents ignore Retry-After, every time.** The scripted client sent 3 of 23 early. Agents were only 0.4–1.9% of the API's load during the fault, so this did not slow recovery; it cost the agents' own goals. A runtime guard (`--retry-after-guard`) is implemented but has not been run in a trial.
+- **Separate finding (local models, no fault):** when the tool hid valid afternoon slots behind a 4 KB result cap, one model booked 08:00 and 11:00 against "15:00 or later", and the original date-only oracle passed those bookings. A start-time filter fixed 8 of 8 such cases; the oracle now checks stated constraints. See the local-model verification report linked from `docs/results.md`.
 
 ## What this is not
 
@@ -67,7 +82,7 @@ make trial MANIFEST=manifests/frozen/eval_v1.yaml CONDITION=agent GATE=off REPEA
 
 ## Limitations
 
-One model (an optional second Meta model if budget allows), one workflow, one fault type, one deliberately constrained backend on one laptop. A recorded agent transcript cannot show what a fresh agent would do; only fresh live-agent trials can. See [`docs/limitations.md`](docs/limitations.md).
+One paid model, one workflow, one fault type, one gate setting, one deliberately constrained backend on one laptop; three paired blocks and one unfamiliar-fault pair. The recovery metric has a 10 s floor. Agents were a small share of load, so this does not show that agents delay recovery. A recorded agent transcript cannot show what a fresh agent would do; only fresh live-agent trials can. See [`docs/limitations.md`](docs/limitations.md).
 
 ## Repository
 

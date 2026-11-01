@@ -94,3 +94,13 @@ def test_decision_rules_put_gate_not_needed_first(tmp_path, capsys, monkeypatch)
     v = out["verdict"]
     assert v["blocks_judged"] == 3 and v["overall"].startswith("gate not needed")
     assert v["rule2_gate_helps (>=2/3)"] is True and not math.isnan(v["bg_dD_spread"])
+
+
+def test_recorded_fingerprint_ignores_treatments_but_not_settings():
+    from analysis.experiment import recorded_compat_fingerprint
+    base = {"fault": {"duration_s": 10, "latency_ms": 400}, "fault_enabled": True,
+            "limits": {"trial_budget_usd": 10}, "backend": {"repo_sha": "abc"}}
+    longer = {**base, "fault": {"duration_s": 20, "latency_ms": 400}, "fault_enabled": False}
+    capped = {**base, "limits": {"trial_budget_usd": 2.52}}
+    assert recorded_compat_fingerprint(base) == recorded_compat_fingerprint(longer)
+    assert recorded_compat_fingerprint(base) != recorded_compat_fingerprint(capped)

@@ -16,6 +16,22 @@ from pathlib import Path
 import pandas as pd
 
 
+def recorded_compat_fingerprint(resolved: dict) -> str:
+    """Stable identity of a recorded configuration: the resolved manifest as stored in the bundle, minus the
+    declared treatment fields. Uses no file on disk, so it does not drift when the code changes."""
+    import hashlib
+
+    from harness.manifest import TREATMENT_FIELDS
+
+    m = json.loads(json.dumps(resolved))
+    for path in TREATMENT_FIELDS:
+        node = m
+        for key in path[:-1]:
+            node = node.get(key, {})
+        node.pop(path[-1], None)
+    return "sha256:" + hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest()
+
+
 def load_verdicts(exp_dir: str | Path) -> list[dict]:
     out = []
     for d in sorted(Path(exp_dir).glob("tr_*")):
@@ -31,10 +47,10 @@ def load_verdicts(exp_dir: str | Path) -> list[dict]:
         resolved = d / "manifest.resolved.json"
         if (not r.get("compat_fingerprint") or r.get("compat_fingerprint") == r.get("config_hash")) \
                 and resolved.exists():
-            # Bundles recorded before compat fingerprints existed: derive it from the bundle's own resolved manifest,
-            # so treatment fields (fault on/off, fault duration) do not split otherwise identical configurations.
-            from harness.manifest import compat_fingerprint
-            r["compat_fingerprint"] = compat_fingerprint(json.loads(resolved.read_text()))
+            # Bundles recorded before compat fingerprints existed: derive it from the bundle's own resolved manifest
+            # ONLY (it records the repo SHA, image digests and data checksum of the run). Hashing live files here
+            # would change the identity whenever the code changes. Treatment fields are removed, as at trial time.
+            r["compat_fingerprint"] = recorded_compat_fingerprint(json.loads(resolved.read_text()))
             r["compat_derived"] = True
         r["final_state"] = meta.get("final_state", r.get("final_state"))
         r["block"] = meta.get("block", r.get("block"))
