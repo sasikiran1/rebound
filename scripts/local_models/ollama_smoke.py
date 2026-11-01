@@ -1,4 +1,6 @@
-"""Relay smoke test and throughput probe (no FieldDesk). Usage: python scripts/ollama_smoke.py <model> [parallel ...]
+"""Relay smoke test and throughput probe (no FieldDesk).
+
+Usage: python scripts/local_models/ollama_smoke.py <model> [parallel ...]
 
 1. One trivial tool-calling request through harness/ollama.py, printed raw.
 2. For each parallel level N: N identical short requests at once; prints per-request server latency and wall time,

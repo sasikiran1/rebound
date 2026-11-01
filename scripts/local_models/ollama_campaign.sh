@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Run a list of local-model trials back to back (30 s cool-down + CPU idle check between them; docs/ollama_protocol.md).
-# Usage: scripts/ollama_campaign.sh <experiment> <specs_file>
+# Usage: scripts/local_models/ollama_campaign.sh <experiment> <specs_file>
 # Each line of specs_file: <manifest> <condition> <gate> <block> <label> [--no-fault]
 # The Meta key is removed from the environment, so no trial can reach a paid model API; .env is never sourced.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 unset MODEL_API_KEY
 exp="$1"; specs="$2"
 mkdir -p "runs/$exp"

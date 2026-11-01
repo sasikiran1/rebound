@@ -40,7 +40,7 @@ Runner (Python) --HTTP--> FieldDesk API (FastAPI + gate) --SQL--> Toxiproxy --SQ
 
 ```bash
 # inside WSL2 Ubuntu (keep the repo in the Linux filesystem, not /mnt/c)
-git clone https://github.com/<you>/rebound && cd rebound
+git clone https://github.com/sasikiran1/rebound && cd rebound
 uv sync
 make sut-up          # postgres, toxiproxy, fielddesk
 make seed tasks      # seeded synthetic data and task sets
@@ -72,7 +72,7 @@ Frozen evaluation `eval-v1`: Muse Spark 1.3 agents, task set B, three paired blo
 - **A short fault does not need the gate:** both arms recover fast, so by the frozen rules the gate is not needed at 10 s. It still spares ordinary users about 3,000 failed requests for one lost goal.
 - **A longer fault does, with a cost:** at 20 s the gate halves lost service and restores health at once, but agents lose 8 correct goals (beyond the predeclared limit of 3; one trial pair, weaker evidence).
 - **Agents ignore Retry-After, every time.** The scripted client sent 3 of 23 early. Agents were only 0.4–1.9% of the API's load during the fault, so this did not slow recovery; it cost the agents' own goals. A runtime guard (`--retry-after-guard`) is implemented but has not been run in a trial.
-- **Separate finding (local models, no fault):** when the tool hid valid afternoon slots behind a 4 KB result cap, one model booked 08:00 and 11:00 against "15:00 or later", and the original date-only oracle passed those bookings. A start-time filter fixed 8 of 8 such cases; the oracle now checks stated constraints. See the local-model verification report linked from `docs/results.md`.
+- **Separate finding (local models, no fault):** when the tool hid valid afternoon slots behind a 4 KB result cap, one model booked 08:00 and 11:00 against "15:00 or later", and the original date-only oracle passed those bookings. A start-time filter fixed 8 of 8 such cases; the oracle now checks stated constraints. See [`docs/ollama_protocol.md`](docs/ollama_protocol.md) for the local-model rules.
 
 ## What this is not
 
@@ -86,7 +86,18 @@ One paid model, one workflow, one fault type, one gate setting, one deliberately
 
 ## Repository
 
-See [`docs/spec.md`](docs/spec.md) for the full design specification and [`docs/protocol.md`](docs/protocol.md) for the frozen evaluation rules.
+| Path | Contents |
+|---|---|
+| `backend/` | FieldDesk, the API under test, with the admission gate |
+| `harness/` | Trial runner, agents, scripted clients, fault control |
+| `oracle/` | SQL verdicts on business outcomes |
+| `analysis/` | Recovery metrics, contracts and reports |
+| `manifests/`, `prompts/`, `data/` | Experiment settings, agent prompt and tools, seeded data and task sets |
+| `docker/` | Compose stack (fixed CPU sets; live trials need at least 16 vCPUs, `make verify` does not) |
+| `docs/` | [Guide to the documents](docs/README.md), starting with the frozen rules in [`docs/protocol.md`](docs/protocol.md) |
+| `scripts/` | [Guide to the scripts](scripts/README.md) |
+
+All code and experiments here were built during the hackathon, Oct 27 – Nov 4, 2026.
 
 ## License
 

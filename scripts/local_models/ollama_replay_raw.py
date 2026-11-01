@@ -1,6 +1,6 @@
 """Diagnostic: resend one recorded Ollama request, optionally without its tool list, and print the model's raw text.
 
-Usage: python scripts/ollama_replay_raw.py <call_NNNNN.json> [--no-tools]
+Usage: python scripts/local_models/ollama_replay_raw.py <call_NNNNN.json> [--no-tools]
 With --no-tools Ollama's tool-call parser is not engaged, so text it would otherwise consume becomes visible.
 This is a diagnostic of the runtime integration, not an agent run: no tool is executed.
 """

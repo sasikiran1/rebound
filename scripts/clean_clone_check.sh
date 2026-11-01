@@ -3,7 +3,7 @@
 # clone -> uv sync --frozen -> restore one experiment from the release archive -> verify (fail closed, strict).
 # Usage: scripts/clean_clone_check.sh <release_dir> <experiment> [branch]
 set -euo pipefail
-release="$1"; exp="$2"; branch="${3:-ollama-verify}"
+release="$1"; exp="$2"; branch="${3:-main}"
 src="$(cd "$(dirname "$0")/.." && pwd)"
 # Restored bundles take about 5 GB per experiment: put TMPDIR on a large disk. The folder is removed on exit.
 work=$(mktemp -d "${TMPDIR:-/tmp}/rebound-clean.XXXX")

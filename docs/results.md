@@ -137,7 +137,7 @@ Task A0001 (narrow_1day, appliance_install, customer 1441): fresh clone, FieldDe
 Rough projection (one goal, not a measurement): at ~45 s per goal, 0.4 goals/s gives ~18 concurrent agents
 (target 8–16, cap 24), and ~220 goals × $0.007 ≈ $1.5 per agent trial.
 
-### Design interpretations (please confirm)
+### Design interpretations
 
 1. **At most one write per goal** is read as at most one *applied* write. After a 409, timeout or 503 the model
    may call `reschedule_appointment` again with the same derived idempotency key. If the earlier attempt
@@ -304,7 +304,7 @@ agent gate-on trials. WSL then returned I/O errors for every command and Docker 
   the 13.35 ms limit, success 99.63%), most likely from the filling disk. Files intact; $0.78 model spend.
 - tr_0010 (gate 8 tokens / 1.5 s): the runner died in OBSERVING; no oracle, analysis or checksums. Marked INVALID
   with `python -m harness mark-crashed` (all files kept); $1.80 model spend from its model_calls.jsonl.
-- After the user freed space (330 GB free), WSL and Docker were restarted and both trials re-run. Preflight now
+- After freeing space (330 GB free), WSL and Docker were restarted and both trials re-run. Preflight now
   requires ≥ 10 GB free on both `/` and the host drive (`/mnt/c`).
 
 Model spend to this point: $2.37 (Day 1 + tr_0002) + $0.78 + $1.80 = $4.95.
@@ -424,8 +424,8 @@ move recovery much; T_rec and D differences between client conditions are not at
 
 Slow agents complied only because a model call took longer than Retry-After. The tool interface has no way to wait.
 Witness g_0083 (tr_0014): 12 refusals in 9.4 s, five calls to the expensive search, tool budget exhausted, oracle
-`failed`. These are exploratory observations from one trial under the old context mode; `docs/screening_v2.md`
-predeclares the test that can confirm or refute them.
+`failed`. These are exploratory observations from one trial under the old context mode; eval-v1 below
+repeats the measurement.
 
 Tests after the changes: 115 passed (38 new), ruff clean, no-sleep check clean.
 
