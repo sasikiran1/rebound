@@ -10,3 +10,10 @@ Recorded before the first evaluation trial, on 2026-10-28.
 - Spend before the evaluation: $14.04 recorded in trial bundles (about $14.06 with untracked single-goal smoke calls).
   Cap for the evaluation: $20 more, cumulative $34.06 across all trial bundles.
 - Anything changed after this commit is a new configuration and needs new trials.
+
+## Note added 2026-10-31
+
+The history was rewritten on 2026-10-31 (see docs/commit_map.txt). The freeze commit recorded above maps to
+5bf59cf, and its record commit to 1fe8168. Comment lines citing the build plan changed from the old file name to
+docs/spec.md in every commit, and one early planning-notes file was removed from the history; no other file
+content changed.

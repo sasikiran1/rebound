@@ -24,3 +24,9 @@ Recorded before the first block trial. Configuration under test: the tree at com
 Pilot (exploratory, task set A, not part of the comparison): runs/ollama-pilot-v1 tr_0001 (B) and tr_0002 (D), both valid.
 Model: gemma4-12b-16k:latest, digest 61d4626bfb6cb772f62a94d562088ea34a427d32f86b20f15c13441823f19b54.
 Block order: manifests/ollama/blocks_v1.specs (seeded shuffles 20261029-20261031).
+
+## Note added 2026-10-31
+
+The history was rewritten on 2026-10-31 (see docs/commit_map.txt): commit 3af7c23 above maps to 10d9eca. Comment lines
+citing the build plan changed from the old file name to docs/spec.md, so files containing such a comment no longer
+match the SHA-256 recorded above; the recorded values are the files as they were when frozen.
