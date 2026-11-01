@@ -9,7 +9,7 @@ import asyncpg
 
 from harness import settings
 from harness.adapter import ToolAdapter, load_tools, new_http_client
-from harness.agent import AgentConfig, run_goal
+from harness.agent import AgentConfig, check_history, item_to_input, run_goal
 from harness.events import EventLog
 from harness.probe import load_tasks
 from harness.provider import PRICES, Provider, ProviderFailed, cost_usd, make_client
@@ -33,10 +33,52 @@ def estimate_from_manifest(m) -> tuple[float, float]:
                                 max_input_tokens=m.limits.input_tokens_per_goal))
 
 
-async def verify_model(model: str) -> None:
-    """One minimal call with one tool, then one continuation via previous_response_id."""
+async def verify_stateless(model: str) -> None:
+    """stateless_reasoning check (audit finding 1): store=False with encrypted reasoning, then a continuation that
+    resends every output item verbatim. Confirms the provider returns encrypted reasoning and accepts it back."""
+    tool = next(t for t in load_tools() if t["name"] == "get_appointment")
+    provider = Provider(make_client())
+    common = dict(model=model, tools=[tool], reasoning={"effort": "low"}, max_output_tokens=2048,
+                  parallel_tool_calls=False, tool_choice="auto", prompt_cache_key="rebound-verify-v2", store=False,
+                  include=["reasoning.encrypted_content"])
+    user = {"role": "user", "content": "Look up appointment 1 with the tool, then report its status."}
+    print(f"[1/2] {model}: stateless call, include=reasoning.encrypted_content (estimated < $0.002)")
+    try:
+        r1 = await provider.create(input=[user], **common)
+    except ProviderFailed as exc:
+        raise SystemExit(f"provider failed: {exc.status} {exc.message}") from exc
+    items = [item_to_input(i) for i in r1.response.output]
+    reasoning = [i for i in items if i.get("type") == "reasoning"]
+    print(f"  output items: {[i.get('type') for i in items]}; reasoning items with encrypted_content: "
+          f"{sum(1 for i in reasoning if i.get('encrypted_content'))}/{len(reasoning)}")
+    total = _print_cost(model, r1.response.usage)
+    call = next((i for i in items if i.get("type") == "function_call"), None)
+    if call is None:
+        raise SystemExit("no function call returned; cannot test the continuation")
+    fake = {"appointment_id": 1, "status": "scheduled", "service": "hvac_repair", "date": "2026-11-05"}
+    history = [user, *items, {"type": "function_call_output", "call_id": call["call_id"], "output": json.dumps(fake)}]
+    problems = check_history(history)
+    if problems:
+        raise SystemExit(f"malformed history: {problems}")
+    print("[2/2] continuation resending all output items verbatim + function_call_output")
+    try:
+        r2 = await provider.create(input=history, **common)
+    except ProviderFailed as exc:
+        raise SystemExit(f"continuation REJECTED: {exc.status} {exc.message}") from exc
+    total += _print_cost(model, r2.response.usage)
+    text = " ".join(c.text for item in r2.response.output if item.type == "message" for c in item.content
+                    if getattr(c, "type", "") == "output_text")
+    print(f"  accepted; text: {text[:200]!r}")
+    print(f"total estimated cost: ${total:.5f}")
+
+
+async def verify_model(model: str, continuation: str = "previous_response_id") -> None:
+    """One minimal call with one tool, then one continuation via previous_response_id (or stateless_reasoning)."""
     if model not in PRICES:
         raise SystemExit(f"no price for {model}")
+    if continuation == "stateless_reasoning":
+        await verify_stateless(model)
+        return
     tool = next(t for t in load_tools() if t["name"] == "get_appointment")
     provider = Provider(make_client())
     common = dict(model=model, tools=[tool], reasoning={"effort": "low"}, max_output_tokens=2048,
@@ -87,12 +129,12 @@ def _print_cost(model: str, usage) -> float:
     return c
 
 
-async def run_one(task_id: str | None, model: str) -> None:
+async def run_one(task_id: str | None, model: str, continuation: str = "previous_response_id") -> None:
     tasks = load_tasks()
     task = next(t for t in tasks if t["task_id"] == task_id) if task_id else next(
         t for t in tasks if t["kind"] == "narrow_1day"
     )
-    cfg = AgentConfig(model=model)
+    cfg = AgentConfig(model=model, continuation=continuation)
     typical, cap = estimate(cfg)
     print(f"goal {task['task_id']} ({task['kind']}, expected {task['expected']}) on {model}")
     print(f"estimated cost: ~${typical:.3f} typical, ${cap:.3f} at the per-goal limits")
@@ -122,11 +164,11 @@ async def run_one(task_id: str | None, model: str) -> None:
     finally:
         await conn.close()
     events.emit("oracle.verdict", goal_id=out.goal_id, task_id=task["task_id"], verdict=v["verdict"],
-                end_reason=v["end_reason"], completed_at=v["completed_at"], facts=v["facts"])
+                end_reason=v["end_reason"], change_inserted_at=v["change_inserted_at"], facts=v["facts"])
     events.close()
     print(f"ended: {out.end_reason}{' (' + out.limit + ')' if out.limit else ''} after {out.duration_s} s, "
           f"{out.model_calls} model calls, {out.tool_calls} tool calls")
     print(f"tokens: input {out.input_tokens} (cached {out.cached_tokens}), output {out.output_tokens} "
           f"(reasoning {out.reasoning_tokens}); estimated cost ${out.cost_usd:.5f}")
-    print(f"oracle: {v['verdict']}  completed_at={v['completed_at']}")
+    print(f"oracle: {v['verdict']}  change_inserted_at={v['change_inserted_at']}")
     print(f"events: runs/{experiment_id}/{trial_id}/")

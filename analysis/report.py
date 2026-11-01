@@ -97,7 +97,9 @@ def trial_figures(trial_dir: Path, result: dict) -> dict[str, str]:
             ys = [(i + 1) / len(feas) for i in range(len(lat))]
             ax.step(lat, ys, where="post", color=BLUE, lw=2)
             ax.set_ylim(0, 1)
-            ax.set_xlabel("seconds from goal arrival to backend commit")
+            basis = result["goals"].get("completion_basis", "change_insert")
+            ax.set_xlabel("seconds from goal arrival to " + ("commit acknowledgment" if basis == "commit_ack"
+                                                             else "change INSERT (precedes commit)"))
             ax.set_title("Completion curve F(tau), feasible goals")
             figs["completion"] = _png(fig)
     return figs
@@ -153,11 +155,28 @@ canary rise {{ r.fault.canary_rise_ms }} ms.</p>
 {% for c in r.cohorts %}<tr><td>{{ c.cohort }}</td><td>{{ c.goals }}</td><td>{{ fmt(c.success, "{:.1%}") }}</td>
 <td>{{ fmt(c.R_attempts_per_goal, "{:.2f}") }}</td><td>{{ fmt(c.W_db_ms_per_goal, "{:.1f}") }}</td><td>{{ c.n_same_call_retry }}</td>
 <td>{{ c.n_switch_to_broad_search }}</td><td>{{ c.n_restart }}</td><td>{{ c.n_other }}</td></tr>{% endfor %}</table></div>
+{% if r.backpressure %}<h2>Back-pressure (Retry-After) compliance</h2>
+<p class="sub">{{ r.backpressure.violations }} of {{ r.backpressure.followed_by_attempt }} refusals with Retry-After were
+followed by the goal's next request too early ({{ r.backpressure.goals_with_violation }} goals; median gap
+{{ fmt(r.backpressure.gap_s_p50, "{:.2f} s") }}; busiest goal {{ r.backpressure.max_attempts_one_goal_10s }} requests in
+10 s).</p>
+{% if r.backpressure.witnesses %}<div class="wrap"><table><tr><th>goal</th><th>refused attempt</th><th>t</th><th>Retry-After</th>
+<th>next attempt</th><th>next tool</th><th>chosen by</th><th>gap</th></tr>
+{% for w in r.backpressure.witnesses[:12] %}<tr><td>{{ w.goal_id }}</td><td><code>{{ w.refused_attempt_id }}</code></td>
+<td>{{ w.t_refused }}</td><td>{{ w.retry_after_s }} s</td><td><code>{{ w.next_attempt_id }}</code></td><td>{{ w.next_tool }}</td>
+<td><code>{{ w.next_model_call_id or "policy" }}</code></td><td>{{ w.gap_s }} s</td></tr>{% endfor %}</table></div>{% endif %}{% endif %}
+{% if r.exposure %}<h2>Who occupied the API (in-flight seconds share)</h2>
+<div class="wrap"><table><tr><th>window</th><th>goal share of in-flight time</th><th>goal share of DB round-trip ms</th>
+<th>goal requests started</th><th>goal requests rejected</th><th>background requests rejected</th></tr>
+{% for k, w in r.exposure.items() %}<tr><td>{{ k }} {{ w.window_s }}</td><td>{{ fmt(w.goal_share_inflight, "{:.2%}") }}</td>
+<td>{{ fmt(w.goal_share_db, "{:.2%}") }}</td><td>{{ w.goal_requests_started }}</td><td>{{ w.goal_requests_rejected }}</td>
+<td>{{ w.background_requests_rejected }}</td></tr>{% endfor %}</table></div>{% endif %}
 <h2>Details</h2>
 <div class="wrap"><table>
 <tr><th>Useful-service check</th><td><code>{{ js(r.useful_service) }}</code></td></tr>
 <tr><th>Gate</th><td><code>{{ js(r.gate_stats) }}</code></td></tr>
-<tr><th>DB time</th><td><code>{{ js(r.db_time) }}</code></td></tr>
+<tr><th>DB round-trip time (incl. proxy latency, not DB CPU)</th><td><code>{{ js(r.db_time) }}</code></td></tr>
+<tr><th>Provenance</th><td><code>{{ js({"config_hash": r.config_hash, "compat_fingerprint": r.get("compat_fingerprint"), "analysis_fingerprint": r.get("analysis_fingerprint"), "metrics_version": r.get("metrics_version")}) }}</code></td></tr>
 <tr><th>Model</th><td><code>{{ js(r.model) }}</code></td></tr>
 <tr><th>Retries</th><td><code>{{ js(r.retries) }}</code></td></tr>
 <tr><th>Runner health</th><td><code>{{ js(r.runner) }}</code></td></tr>
@@ -181,8 +200,9 @@ def js(v) -> str:
 
 
 def trial_report(trial_dir: str | Path, result: dict, out_dir: str | Path | None = None) -> Path:
-    trial_dir = Path(trial_dir)
-    figs = trial_figures(trial_dir, result)
-    out = Path(out_dir or trial_dir) / "report.html"
+    """Render from the derived CSVs in `out_dir` (default: the bundle, as during a trial)."""
+    d = Path(out_dir) if out_dir is not None else Path(trial_dir)
+    figs = trial_figures(d, result)
+    out = d / "report.html"
     out.write_text(TRIAL_TEMPLATE.render(r=result, figs=figs, fmt=fmt, js=js))
     return out
