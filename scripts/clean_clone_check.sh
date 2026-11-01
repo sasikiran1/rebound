@@ -5,7 +5,9 @@
 set -euo pipefail
 release="$1"; exp="$2"; branch="${3:-ollama-verify}"
 src="$(cd "$(dirname "$0")/.." && pwd)"
-work=$(mktemp -d /tmp/rebound-clean.XXXX)
+# Restored bundles take about 5 GB per experiment: put TMPDIR on a large disk. The folder is removed on exit.
+work=$(mktemp -d "${TMPDIR:-/tmp}/rebound-clean.XXXX")
+trap 'rm -rf "$work"' EXIT
 git clone -q --branch "$branch" "$src" "$work/rebound"
 cd "$work/rebound"
 echo "clone at $(git log --oneline -1)"
@@ -24,4 +26,4 @@ set -e
 echo "verify exit status $code"
 echo "matches saved verdict: $(grep -c 'MATCHES SAVED VERDICT' "$work/verify.log") of $(ls -d runs/"$exp"/tr_* | wc -l)"
 grep -v 'MATCHES SAVED VERDICT' "$work/verify.log" | head -5 || true
-echo "work dir $work"
+echo "work dir $work (removed on exit)"
