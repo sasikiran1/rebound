@@ -34,7 +34,8 @@ def main() -> None:
     m["replay_trace"] = f"runs/{EXPERIMENT}/tr_0001/client.jsonl"
     out = Path("manifests/frozen/eval_v1.yaml")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("# FROZEN evaluation manifest. Do not edit: any change is a new configuration.\n"
+    out.write_text("# FROZEN evaluation manifest. Do not edit: any change is a new configuration"
+                   ".\n"
                    + yaml.safe_dump(m, sort_keys=False, default_flow_style=None, width=120))
 
     rng = random.Random(ORDER_SEED)

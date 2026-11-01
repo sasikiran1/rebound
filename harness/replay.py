@@ -1,5 +1,5 @@
-"""Fixed-trace replay: re-send one healthy reference agent trial's requests, per goal, at their
-recorded offsets from goal start. Open-loop: responses are ignored, nothing is retried, nothing reacts.
+"""Fixed-trace replay: re-send one healthy reference agent trial's requests, per goal, at
+their recorded offsets from goal start. Open-loop: responses are ignored, nothing is retried, nothing reacts.
 
 The trace is read from the reference trial's client.jsonl: every agent `http.attempt` (with the exact request it
 sent) and every `defer_goal` operation, timed from the goal's `goal.started` event.
