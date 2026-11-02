@@ -519,3 +519,28 @@ Requirement enforcement blocked 0 bookings on Muse (`blocks = 0` in all 18 harde
 and left no visible JSON; 4 run, 4 correct; $0.66. `muse_hunt_2` (low reasoning effort): 24 of 24 generated, 24 correct,
 0 candidates, $0.48. All 24 were time-of-day requests and 4 were infeasible, so the search was narrow. A local trial run
 produced one candidate, a `generator_mismatch`: the message said "before noon", the constraint added a 09:00 floor.
+
+## Refusal probe and interface check (Nov 2, 2026; `runs/policy-probe/muse-001`, `runs/goal-preservation/interface-check-001`)
+
+Protocols committed before the runs (a0214c8). Model spend $2.85 (cap $6, within the $13 approved on Nov 2);
+cumulative $47.71.
+
+Refusal probe, Muse Spark 1.3, 30 goals per arm, two injected 503s per goal, Retry-After 2 s, no load or fault:
+
+| Arm | Correct | Sent too early |
+|---|---|---|
+| base | 30 | 60/60 |
+| wait tool | 30 | 0/60 |
+| wait tool + served policy | 30 | 0/60 |
+| served policy, no wait tool | 30 | 56/60 |
+| pause 1 / 2 / 3 s before each model call | 30 / 30 / 30 | 51/60, 0/60, 0/60 |
+| previous_response_id (inconclusive: 5 provider failures) | 27 | 0/59 |
+
+The wait tool alone removed every early request; the policy text is not credited because its control was already
+at 0. Without a wait tool, early share follows client latency. Counts recounted from FieldDesk's request log: all
+match. Details: `docs/policy_probe_results.md`.
+
+Interface check, local Ollama, 12 healthy single-goal sessions per model and arm: Llama 3.1 8B completed 0/12 with the
+cohort's wording and 0/12 with explicit effect-status wording; Qwen3.5 4B 12/12 in both. Llama told the customer the
+appointment was booked after an evaluate response that said nothing was booked (4 sessions). Details:
+`docs/interface_competence_results.md`.
