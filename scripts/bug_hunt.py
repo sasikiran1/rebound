@@ -90,8 +90,9 @@ async def generate(client, args, n: int) -> tuple[list[dict], float]:
         techs = sorted({r["technician_id"] for r in rows})[:12]
         brief = BRIEF.format(service=t["service"].replace("_", " "), current=t["current_date"], d1=t["d1"], d2=t["d2"],
                              techs=techs)
-        r = await client.responses.create(model=args.model, instructions=brief, tools=[], max_output_tokens=1500,
-                                          input=[{"role": "user", "content": "Write one message."}])
+        r = await client.responses.create(model=args.model, instructions=brief, tools=[], max_output_tokens=2048,
+                                          input=[{"role": "user", "content": "Write one message."}],
+                                          reasoning={"effort": "low"}, store=False)
         u = r.usage
         spent += cost_usd(args.model, u.input_tokens, 0, u.output_tokens)
         s = parse_scenario(_visible_text(r))
