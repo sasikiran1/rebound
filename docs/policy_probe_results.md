@@ -37,7 +37,7 @@ Its 59 followed refusals are listed for description only.
   0.78 s in `base`). Telling an agent to wait does not work if it has nothing to wait with.
 - Reading with eval-v1: the 350/350 early requests there came from agents that had no wait tool. They are
   consistent with "could not wait", and this probe does not support "chose to ignore Retry-After". The probe has
-  no load and no fault, so it does not show recovery effects; the agent-v2 guard trials remain the load evidence.
+  no load and no fault; the load trial below checks it under the real 20 s fault.
 
 ## Pacing (question 2)
 
@@ -48,12 +48,34 @@ Its 59 followed refusals are listed for description only.
 - `base_prid` (inconclusive) had a 9.2 s median model step and 0 early requests. That fits the latency curve, so its
   earlier "compliance" is not credited to the continuation mode.
 
+## Follow-up: load trial with the wait tool (`runs/wait-tool-v1/tr_0001`)
+
+Pass marks added to the protocol and committed (ac913c5) before the trial. Gate on, 20 s fault, eval-v1 manifest
+with the wait tool added; no guard, no policy. Valid; $2.36.
+
+| 20 s fault, gate on | Correct of 209 | Sent too early | Median gap | Refusals | T_rec (s) | Lost service D |
+|---|---:|---:|---:|---:|---:|---:|
+| eval-v1 tr_0018, no guard | 201 | 139/139 | 0.84 s | 147 | 10 | 10,212 |
+| agent-v2-guard tr_0004, client guard | 209 | 0/113 | 2.00 s | 113 | 10 | 10,190 |
+| wait-tool-v1 tr_0001, wait tool | 208 | 1/61 | 3.77 s | 61 | 10 | 10,232 |
+
+- Pass marks **met**: 1 of 61 followed refusals early (1.6%, limit 5%); 208 correct (limit 208).
+- 16 goals met refusals and called `wait` 60 times. Refusals fell to 61, fewer than with the client guard (113):
+  the model waited longer than Retry-After (median gap 3.8 s) and sometimes switched to a cheaper call.
+- The one failed goal, g_0083, met six refusals in a row. It waited five times; each wait counts as a tool call, so
+  it reached the 14-call limit right after its booking hit a 409 (slot taken). The single early request was this
+  goal switching to `list_technicians` 1.08 s after a refusal, without waiting. The client guard does not use the
+  tool budget, which is one reason it kept 209.
+- Recovery time and lost ordinary-user service did not change, as with the guard: agents are a small share of load.
+- One trial against two comparators on different code: weak evidence. It agrees with the probe.
+
 ## Limits
 
 One run, 30 goals per arm, one model, one Retry-After value (2 s), refusals injected by the server on each goal's
 first two requests rather than produced by load. The wait tool was always offered among 8 tools; a different tool
-name or description may change uptake. Whether waiting helps recovery under a real fault was not measured here.
+name or description may change uptake. The probe itself has no load; the single load trial is above.
 
 ## Spend
 
-$2.85 for this run. The $13 cap approved on 2026-11-02 has $10.15 left.
+$2.85 for the probe and $2.36 for the load trial. The $13 cap approved on 2026-11-02 has $7.79 left; cumulative
+recorded spend $50.07.

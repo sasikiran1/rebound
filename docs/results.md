@@ -520,7 +520,7 @@ and left no visible JSON; 4 run, 4 correct; $0.66. `muse_hunt_2` (low reasoning 
 0 candidates, $0.48. All 24 were time-of-day requests and 4 were infeasible, so the search was narrow. A local trial run
 produced one candidate, a `generator_mismatch`: the message said "before noon", the constraint added a 09:00 floor.
 
-## Refusal probe and interface check (Nov 2, 2026; `runs/policy-probe/muse-001`, `runs/goal-preservation/interface-check-001`)
+## Refusal probe and interface check (Nov 2, 2026; `runs/policy-probe/muse-001`, `runs/wait-tool-v1`, `runs/goal-preservation/interface-check-001`)
 
 Protocols committed before the runs (a0214c8). Model spend $2.85 (cap $6, within the $13 approved on Nov 2);
 cumulative $47.71.
@@ -539,6 +539,11 @@ Refusal probe, Muse Spark 1.3, 30 goals per arm, two injected 503s per goal, Ret
 The wait tool alone removed every early request; the policy text is not credited because its control was already
 at 0. Without a wait tool, early share follows client latency. Counts recounted from FieldDesk's request log: all
 match. Details: `docs/policy_probe_results.md`.
+
+Load trial with the wait tool (`runs/wait-tool-v1/tr_0001`, gate on, 20 s fault, valid, $2.36; pass marks fixed in
+ac913c5 before it ran): 208 of 209 correct, 1 of 61 followed refusals early, 61 refusals, T_rec 10 s, D 10,232.
+Comparators at 20 s: tr_0018 (no guard) 201, 139/139 early; agent-v2-guard tr_0004 (client guard) 209, 0/113. Pass
+marks met. The one failed goal used 5 of its 14 tool calls on waits and ran out after a 409. Cumulative spend $50.07.
 
 Interface check, local Ollama, 12 healthy single-goal sessions per model and arm: Llama 3.1 8B completed 0/12 with the
 cohort's wording and 0/12 with explicit effect-status wording; Qwen3.5 4B 12/12 in both. Llama told the customer the
