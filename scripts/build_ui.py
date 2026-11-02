@@ -163,6 +163,25 @@ def agent_v2() -> dict:
                      "kinds": dict(Counter(s["constraint"]["kind"] for s in scenarios))}}
 
 
+def refusal_probe() -> dict:
+    """Refusal probe arms (docs/policy_probe_results.md) and the wait-tool load trial, if it has run."""
+    s = json.loads(Path("runs/policy-probe/muse-001/summary.json").read_text())["arms"]
+    arms = [{"arm": a, "correct": v["verdicts"].get("correct", 0), "goals": v["goals"], "early": v["early_requests"],
+             "followed": v["refusals_followed_by_a_request"], "gap": v["gap_s_median"],
+             "provider_failed": v["end_reasons"].get("provider_failed", 0)} for a, v in s.items()]
+    trial = None
+    for d in sorted(Path("runs/wait-tool-v1").glob("tr_*")):
+        if (d / "verdict.json").exists():
+            v = load_verdict(d)
+            bp = v["backpressure"]
+            trial = {"id": d.name, "sums_ok": not verify_raw(d), "status": v["status"],
+                     "correct": v["goals"]["verdicts"].get("correct", 0), "goals": v["goals"]["scheduled"],
+                     "too_early": bp["violations"], "followed": bp["followed_by_attempt"], "signals": bp["signals"],
+                     "gap_p50": bp["gap_s_p50"], "t_rec": v["recovery"]["t_rec_s"],
+                     "lost": round(v["background"]["lost_service_D"])}
+    return {"arms": arms, "trial": trial}
+
+
 def main() -> None:
     trials, all_series = eval_trials()
     summary = json.loads((EVAL / "summary.json").read_text())
@@ -173,7 +192,7 @@ def main() -> None:
         "criteria": {k: {"verdict": v.get("verdict")} for k, v in summary["acceptance"]["criteria"].items()},
         "excluded": summary["excluded"], "amplification": summary["amplification_vs_replay"],
         "replay": goal_replay("tr_0018"), "background": background_control(), "tools": tool_test(),
-        "guard": guard_study(), "v2": agent_v2(),
+        "guard": guard_study(), "v2": agent_v2(), "probe": refusal_probe(),
         "spend": round(sum(t["cost"] for t in trials), 2),
         "outcomes": dict(sum((Counter(t["verdicts"]) for t in trials), Counter())),
     }

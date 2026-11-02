@@ -54,6 +54,21 @@ step exceeds 2 s. Supported if `base` early share is at least 0.80 and `base_pau
 read against the curve by its median gap; its continuation mode alone is not credited with compliance if its gap
 explains it.
 
+## Follow-up: one load trial with the wait tool
+
+Added after the probe's results (`docs/policy_probe_results.md`) and before this trial ran.
+
+- Manifest `manifests/exploratory/wait_tool_v1.yaml`: `manifests/frozen/eval_v1.yaml` with only the experiment name
+  and the tool set changed (tools_v1 plus `wait`). Gate on, 20 s fault, no runtime guard, no agent policy.
+  Command: `python -m harness trial --manifest manifests/exploratory/wait_tool_v1.yaml --condition agent --gate on
+  --experiment wait-tool-v1 --block 1 --label wait-20s --fault-duration-s 20`.
+- Comparators, all 20 s and gate on, different code: eval-v1 tr_0018 (no guard: 201 of 209 correct, 139/139 early)
+  and agent-v2-guard tr_0004 (client guard: 209 of 209, 0/113 early).
+- Supported if requests sent before Retry-After expired are at most 5% of refused requests followed by another
+  request, and correct goals are at least 208. One trial: weak evidence, reported as one pair with each comparator.
+- Estimate about $2.40 (eval-v1 20 s trials); stops at the trial budget in the manifest ($10). Spend counts against
+  the $13 cap ($10.15 left before this trial).
+
 ## Spend and rules
 
 - Estimate: about $0.0105 per goal at the eval-v1 token mix, plus extra calls for refusals; 240 goals, about $3.20.

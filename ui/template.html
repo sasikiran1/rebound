@@ -48,6 +48,8 @@ td.wrap{white-space:normal;min-width:190px}
 .pass{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
 .fail{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
 .note{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
+.bar{display:inline-block;width:120px;height:10px;background:var(--soft);border-radius:5px;overflow:hidden;vertical-align:middle}
+.bar i{display:block;height:100%;background:var(--off)}
 .crit{display:grid;grid-template-columns:42px 1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);align-items:baseline}
 .crit:last-child{border:0}
 .crit b{color:var(--muted);font-size:14px}
@@ -148,7 +150,10 @@ const views = {
   },
 
   fixes() {
-    const G = D.guard, V = D.v2, ten = G.slice(0, 3), twenty = G[3];
+    const G = D.guard, V = D.v2, P = D.probe, ten = G.slice(0, 3), twenty = G[3];
+    const PROBE_NAMES = {base: "Original tools", wait: "+ wait tool", wait_policy: "+ wait tool + served policy",
+      policy_nowait: "Served policy, no wait tool", base_prid: "Original, stored conversation (slow calls)",
+      base_pause1: "Original, 1 s pause per call", base_pause2: "Original, 2 s pause per call", base_pause3: "Original, 3 s pause per call"};
     const pct = g => Math.round(g.on.signals / g.off.signals * 100);
     const avg = a => (a.reduce((s, x) => s + x, 0) / a.length).toFixed(1);
     const tick = ok => `<span class="pill ${ok ? "pass" : "fail"}">${ok ? "Met" : "Not met"}</span>`;
@@ -165,6 +170,19 @@ const views = {
       <div class="crit"><b></b><div>Refusals cut to at most half<small>Fell to ${ten.map(pct).join("%, ")}% of the comparator, so the bar we set was missed</small></div>${tick(ten.every(g => g.on.signals * 2 <= g.off.signals))}</div>
     </div>
     <p>In the 20 s fault, correct goals went from ${twenty.off.correct} to ${twenty.on.correct}. That is one pair, so weaker evidence. Recovery and lost ordinary-user requests didn't improve: the guard protects the agent's work, not the server.</p>
+    <h2>Why the agents didn't wait: they had no way to</h2>
+    <p>A refusal probe refused every goal's first two requests with 503 and Retry-After 2 s, with no load and no fault, 30 Muse goals per arm. Give the agent a plain <code>wait</code> tool and it uses it. Telling it to wait, in a policy the API serves, does nothing without one.</p>
+    <div class="panel"><div class="scroll"><table><thead><tr><th>Arm</th><th>Sent too early</th><th></th><th>Median gap</th><th>Correct</th></tr></thead><tbody>
+    ${P.arms.map(a => `<tr><td>${PROBE_NAMES[a.arm]}${a.provider_failed ? ` <span class="pill note">inconclusive: ${a.provider_failed} provider failures</span>` : ""}</td><td>${a.early}/${a.followed}</td><td><span class="bar"><i style="width:${Math.round(a.early / a.followed * 100)}%"></i></span></td><td>${a.gap.toFixed(2)} s</td><td>${a.correct}/${a.goals}</td></tr>`).join("")}
+    </tbody></table></div></div>
+    <p>Without a wait tool, "compliance" is just how slow the client is: a 2 s pause before each model call looks as polite as the wait tool. The earlier slow runs that seemed to honor Retry-After were slow, not careful.</p>
+    ${P.trial ? `<h3>Under a real 20 s fault, gate on</h3>
+    <div class="panel"><div class="scroll"><table><thead><tr><th>Trial</th><th>Correct goals</th><th>Sent too early</th><th>Median gap</th><th>Refusals</th><th>Recovery (s)</th><th>Lost requests</th></tr></thead><tbody>
+    <tr><td>No guard (${twenty.off.id})</td><td>${twenty.off.correct}</td><td>${twenty.off.too_early}/${twenty.off.followed}</td><td>${twenty.off.gap_p50.toFixed(2)} s</td><td>${twenty.off.signals}</td><td>${twenty.off.t_rec}</td><td>${fmt(twenty.off.lost)}</td></tr>
+    <tr><td>Client guard (${twenty.on.id})</td><td>${twenty.on.correct}</td><td>${twenty.on.too_early}/${twenty.on.followed}</td><td>${twenty.on.gap_p50.toFixed(2)} s</td><td>${twenty.on.signals}</td><td>${twenty.on.t_rec}</td><td>${fmt(twenty.on.lost)}</td></tr>
+    <tr><td><b>Wait tool (${P.trial.id})</b></td><td><b>${P.trial.correct}</b></td><td><b>${P.trial.too_early}/${P.trial.followed}</b></td><td>${P.trial.gap_p50.toFixed(2)} s</td><td>${P.trial.signals}</td><td>${P.trial.t_rec}</td><td>${fmt(P.trial.lost)}</td></tr>
+    </tbody></table></div></div>
+    <p>One trial per row, on different code versions, so this is weaker evidence than the probe.</p>` : ""}
     <h2>The agent that reads plain language</h2>
     <p>The model records what the customer asked for, and code refuses any booking that breaks it. Scored on ${V.muse.hardened.n} held-out customer messages.</p>
     <div class="cards">
