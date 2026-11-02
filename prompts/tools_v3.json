@@ -1,0 +1,222 @@
+[
+  {
+    "type": "function",
+    "name": "get_customer_appointments",
+    "description": "List a customer's appointments (all statuses) with service, date, start time, slot and technician.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "customer_id": {
+          "type": "integer",
+          "description": "Customer ID."
+        }
+      },
+      "required": [
+        "customer_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "get_appointment",
+    "description": "Read one appointment by ID: customer, status, service, required skill, date, start time, slot and technician.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "appointment_id": {
+          "type": "integer",
+          "description": "Appointment ID."
+        }
+      },
+      "required": [
+        "appointment_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "check_day_availability",
+    "description": "List open slots on one date for one service type, offered by technicians who have the service's skill and cover the given region.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "pattern": "^R[0-9]{2}$",
+          "description": "Region code, e.g. R07."
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Date, YYYY-MM-DD."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service type code, as shown on the appointment, e.g. hvac_repair."
+        },
+        "start_after": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+          "description": "Optional. Only slots starting at or after this local time (HH:MM)."
+        },
+        "start_before": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+          "description": "Optional. Only slots starting before this local time (HH:MM)."
+        }
+      },
+      "required": [
+        "region",
+        "date",
+        "service"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "search_availability",
+    "description": "Search open slots over a date range for one service type, offered by technicians who have the service's skill and cover any of the given regions. Results are ranked by distance from the first region, then date and time.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string",
+          "description": "Service type code, e.g. hvac_repair."
+        },
+        "date_from": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "First date, YYYY-MM-DD."
+        },
+        "date_to": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Last date, YYYY-MM-DD (inclusive)."
+        },
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^R[0-9]{2}$",
+            "description": "Region code, e.g. R07."
+          },
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "description": "Region codes; the first one is used for distance ranking."
+        },
+        "start_after": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+          "description": "Optional. Only slots starting at or after this local time (HH:MM)."
+        },
+        "start_before": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+          "description": "Optional. Only slots starting before this local time (HH:MM)."
+        }
+      },
+      "required": [
+        "service",
+        "date_from",
+        "date_to",
+        "regions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "list_technicians",
+    "description": "List technicians who have a skill and cover a region, with their skills, covered regions and number of open slots in the scheduling horizon.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "pattern": "^R[0-9]{2}$",
+          "description": "Region code, e.g. R07."
+        },
+        "skill": {
+          "type": "string",
+          "description": "Skill code, e.g. hvac (an appointment's required_skill)."
+        }
+      },
+      "required": [
+        "region",
+        "skill"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "reschedule_appointment",
+    "description": "Move an appointment to another slot. Fails with a conflict if the slot is already booked.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "appointment_id": {
+          "type": "integer",
+          "description": "Appointment ID to move."
+        },
+        "slot_id": {
+          "type": "integer",
+          "description": "Target slot ID."
+        }
+      },
+      "required": [
+        "appointment_id",
+        "slot_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "defer_goal",
+    "description": "Stop without changing anything and hand the request back, with a short reason.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Short reason."
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "record_requirements",
+    "description": "Record what the customer requires beyond the date window. Call this before booking. Omit what the customer did not ask for. Bookings that break these requirements are refused.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "earliest_start": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+          "description": "Earliest acceptable start time (HH:MM)."
+        },
+        "latest_start": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+          "description": "The slot must start before this time (HH:MM)."
+        },
+        "technician_id": {
+          "type": "integer",
+          "description": "The only acceptable technician."
+        }
+      }
+    }
+  }
+]

@@ -85,6 +85,25 @@ class GoalState:
     hold_until: float | None = None  # retry_after_guard: monotonic time before which no attempt is sent
     retry_after_holds: int = 0
     retry_after_hold_s: float = 0.0
+    requirements: dict | None = None  # record_requirements: what the model says the customer asked for
+    seen_slots: dict[int, dict] = field(default_factory=dict)  # slots actually shown to the model
+    requirement_blocks: int = 0
+
+
+def requirement_problem(requirements: dict | None, slot: dict | None) -> str | None:
+    """Deterministic pre-booking check (tool set v3). The model states the requirements; code enforces them."""
+    if requirements is None:
+        return "call record_requirements with the customer's stated requirements before booking"
+    if slot is None:
+        return "this slot was not returned by an availability tool in this task; look it up first"
+    start = slot["starts_at"][11:16]
+    if requirements.get("earliest_start") and start < requirements["earliest_start"]:
+        return f"slot starts at {start}, before the required earliest start {requirements['earliest_start']}"
+    if requirements.get("latest_start") and start >= requirements["latest_start"]:
+        return f"slot starts at {start}, not before the required latest start {requirements['latest_start']}"
+    if requirements.get("technician_id") and slot["technician_id"] != requirements["technician_id"]:
+        return f"slot has technician {slot['technician_id']}, the customer requires {requirements['technician_id']}"
+    return None
 
 
 @dataclass
@@ -242,6 +261,19 @@ class ToolAdapter:
             self.events.emit("tool.op", **ids, status="deferred", latency_ms=0.0, attempts=0, reason=args["reason"])
             return {"deferred": True}
 
+        if name == "record_requirements":
+            state.requirements = args
+            self.events.emit("tool.op", **ids, status="ok", latency_ms=0.0, attempts=0, requirements=args)
+            return {"recorded": args}
+
+        if name == "reschedule_appointment" and "record_requirements" in self.schemas:
+            blocked = requirement_problem(state.requirements, state.seen_slots.get(args["slot_id"]))
+            if blocked is not None:
+                state.requirement_blocks += 1
+                self.events.emit("tool.op", **ids, status="requirement_violation", latency_ms=0.0, attempts=0,
+                                 reason=blocked)
+                return error("requirement_violation", blocked)
+
         method, template, path, params, body = build_request(name, args, scope)
         url = self.url(path)
         t_op = time.perf_counter()
@@ -290,6 +322,7 @@ class ToolAdapter:
                 state.write_applied = True
                 state.change_id = result.get("change_id")
             result = truncate(result, self.max_result_bytes)
+            state.seen_slots.update({s["slot_id"]: s for s in result.get("slots", []) if "slot_id" in s})
         self.events.emit("tool.op", **ids, status=attempt["status"], http_status=attempt["http_status"],
                          latency_ms=round((time.perf_counter() - t_op) * 1000, 1), attempts=n)
         return result
