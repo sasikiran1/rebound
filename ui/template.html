@@ -108,6 +108,7 @@ const views = {
     <h2>What this shows</h2>
     <p><b>A short fault doesn't need the gate; a longer one does, at a cost.</b> At 10 s the API recovers quickly on its own. At 20 s it recovers slowly without the gate, and the gate halves lost service but costs correct agent work.</p>
     <p><b>Agents don't wait when told to.</b> They ignored the server's Retry-After every time. Agents were at most ${(Math.max(...agentsOn.map(t => t.goal_share)) * 100).toFixed(1)}% of in-flight load during the fault, and the gate's effect is the same with no agents present. <b>We do not claim that agents delay recovery:</b> this load was too light on agents to show it either way.</p>
+    <p><b>Waiting fixes it.</b> With a runtime guard that holds the next request until Retry-After passes, the agents kept all ${D.guard[3].on.correct} goals in the 20 s fault, up from ${D.guard[3].off.correct}. See <b>Fixes</b> for what passed and what didn't.</p>
     <h2>Acceptance criteria, fixed before the first trial</h2>
     <div class="panel">${crit.map(c => `<div class="crit"><b>${c[0]}</b><div>${c[1]}<small>${c[2]}</small></div><span class="pill ${c[3]}">${c[4]}</span></div>`).join("")}</div>`;
   },
@@ -140,14 +141,45 @@ const views = {
     <p>During the fault, agents also made ${D.amplification.agent.R_fault.toFixed(2)}× the attempts of a replay of their own healthy traffic. The scripted client made ${D.amplification.scripted.R_fault.toFixed(2)}×.</p>
     <h2>One lost goal, step by step</h2>
     <p>Goal ${R.goal} in ${R.trial} (20 s fault, gate on): ${refusals} refusals used up its tool budget just as the server recovered. The SQL oracle's verdict: <span class="pill fail">${R.verdict}</span>. This is the recorded sequence, with the model's visible text.</p>
-    <p class="note pill" style="font-weight:400;margin-bottom:12px">That Retry-After behavior caused the lost goals is inference. No trial has tested a wait guard yet.</p>
+    <p>A runtime guard that waits out Retry-After kept every goal in the same conditions. See <b>Fixes</b>.</p>
     <div class="panel">${R.steps.map(s => s.kind === "http"
       ? `<div class="step"><time>${s.t.toFixed(1)} s</time><div>${esc(s.tool)} → <b class="${s.status === 200 ? "on" : "off"}">${s.status ?? esc(s.outcome)}</b>${s.retry_after ? ` · retry after ${s.retry_after} s` : ""}</div></div>`
       : `<div class="step"><time>${s.t.toFixed(1)} s</time><div class="say">"${esc(s.text)}"</div></div>`).join("")}</div>`;
   },
 
+  fixes() {
+    const G = D.guard, V = D.v2, ten = G.slice(0, 3), twenty = G[3];
+    const pct = g => Math.round(g.on.signals / g.off.signals * 100);
+    const avg = a => (a.reduce((s, x) => s + x, 0) / a.length).toFixed(1);
+    const tick = ok => `<span class="pill ${ok ? "pass" : "fail"}">${ok ? "Met" : "Not met"}</span>`;
+    return `<h1>Fixing what the tests found</h1>
+    <p class="lead">A second study on Muse Spark, with its pass marks written down before any paid run. Compared with the evaluation trials, the guard runs on newer code, so these are comparisons across configurations.</p>
+    <h2>The agent that waits</h2>
+    <p>A runtime guard holds a goal's next request until Retry-After has passed. It adds no request the model didn't ask for.</p>
+    <div class="panel"><div class="scroll"><table><thead><tr><th>Fault</th><th>Correct goals</th><th>Sent too early</th><th>Median wait</th><th>Refusals</th><th>Recovery (s)</th><th>Lost requests</th></tr></thead><tbody>
+    ${G.map(g => `<tr><td>${g.name}</td><td><span class="off">${g.off.correct}</span> → <b class="on">${g.on.correct}</b></td><td><span class="off">${g.off.too_early}/${g.off.followed}</span> → <b class="on">${g.on.too_early}/${g.on.followed}</b></td><td>${g.off.gap_p50.toFixed(2)} → ${g.on.gap_p50.toFixed(2)} s</td><td>${g.off.signals} → ${g.on.signals}</td><td>${g.off.t_rec} → ${g.on.t_rec}</td><td>${fmt(g.off.lost)} → ${fmt(g.on.lost)}</td></tr>`).join("")}
+    </tbody></table></div></div>
+    <div class="panel">
+      <div class="crit"><b></b><div>Nothing sent too early (10 s trials)</div>${tick(ten.every(g => g.on.too_early === 0))}</div>
+      <div class="crit"><b></b><div>Correct goals kept (within 1 of the comparator)<small>${ten.map(g => `${g.off.correct} → ${g.on.correct}`).join(", ")}</small></div>${tick(ten.every(g => g.on.correct >= g.off.correct - 1))}</div>
+      <div class="crit"><b></b><div>Refusals cut to at most half<small>Fell to ${ten.map(pct).join("%, ")}% of the comparator, so the bar we set was missed</small></div>${tick(ten.every(g => g.on.signals * 2 <= g.off.signals))}</div>
+    </div>
+    <p>In the 20 s fault, correct goals went from ${twenty.off.correct} to ${twenty.on.correct}. That is one pair, so weaker evidence. Recovery and lost ordinary-user requests didn't improve: the guard protects the agent's work, not the server.</p>
+    <h2>The agent that reads plain language</h2>
+    <p>The model records what the customer asked for, and code refuses any booking that breaks it. Scored on ${V.muse.hardened.n} held-out customer messages.</p>
+    <div class="cards">
+      <div class="card"><div class="k">Original agent, Muse</div><div class="v">${V.muse.original.correct} of ${V.muse.original.n}</div><div class="s">${V.muse.original.incorrect} wrong booking</div></div>
+      <div class="card"><div class="k">Hardened agent, Muse</div><div class="v">${V.muse.hardened.correct} of ${V.muse.hardened.n}</div><div class="s">${V.muse.hardened.incorrect} wrong bookings</div></div>
+      <div class="card"><div class="k">Tool calls on afternoon requests</div><div class="v">${avg(V.afternoon_tools.original)} → ${avg(V.afternoon_tools.hardened)}</div><div class="s">average, original → hardened</div></div>
+    </div>
+    <div class="panel"><div class="crit"><b></b><div>At least 4 more correct goals<small>Muse was already strong at this: the gain was +${V.muse.hardened.correct - V.muse.original.correct}. A weaker local model, on the tasks used to develop the agent, went from ${V.local.original.correct} to ${V.local.hardened.correct} of ${V.local.hardened.n}.</small></div>${tick(V.muse.hardened.correct >= V.muse.original.correct + 4)}</div></div>
+    <p>Code enforces what the model records, so a wrong reading of the customer isn't caught.</p>
+    <h2>The agent that hunts for bugs</h2>
+    <p>Muse invented ${V.hunt.n} tricky customer messages, SQL decided which were feasible, and the oracle judged the outcomes. The hardened agent got ${V.hunt.verdicts.correct ?? 0} of ${V.hunt.n} correct, so there were ${V.hunt.candidates} failures to review. That isn't proof the agent is flawless: every message was about time of day, and only ${V.hunt.infeasible} were impossible. An earlier run lost most of its scenarios to a defect in the generator, and it stays in the record.</p>`;
+  },
+
   bookings() {
-    const arms = [["v1", "Original tools"], ["v2_time", "+ start-time filter"], ["v2_page", "+ pagination"]];
+    const arms =[["v1", "Original tools"], ["v2_time", "+ start-time filter"], ["v2_page", "+ pagination"]];
     const models = [...new Set(D.tools.map(r => r.model))];
     const cases = ["LATE_A", "LATE_B"];
     const cell = r => {
@@ -239,7 +271,7 @@ function recoveryInit() {
   bind("runSeg", v => run = v); bind("metSeg", v => metric = v); draw();
 }
 
-const tabs = [["overview","Overview"],["recovery","Recovery"],["agents","Agent behavior"],["bookings","Bookings"],["evidence","Evidence"]];
+const tabs = [["overview","Overview"],["recovery","Recovery"],["agents","Agent behavior"],["bookings","Bookings"],["fixes","Fixes"],["evidence","Evidence"]];
 function go(name) {
   if (!views[name]) name = "overview";
   $("#view").innerHTML = views[name]();

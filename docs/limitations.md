@@ -45,7 +45,8 @@ What Rebound's results do and do not support, as of 2026-10-28. Numbers are in `
 - Scripted think time 0.77 s (agents' median healthy step under full_history), not the exploration value of 10.25 s.
 - tr_0018 ran from a copy of the frozen manifest differing only in `trial_budget_usd` (2.52) to hold the $20 cap;
   the strict analyzer therefore treats the 20 s pair as two configurations (C5 insufficient evidence).
-- Retry-After guard: implemented and tested in unit tests, never run in a trial.
+- Retry-After guard: run in the separate agent-v2 study, on newer code than eval-v1, so its comparisons cross
+  configurations.
 - The original date-only oracle could not see customer time or technician constraints or a competitor taking the
   only slot. It now accepts an optional task `constraint` and judges a deferral against what is still free; earlier
   verdicts were produced without it, and finished trials cannot be re-scored because their databases are discarded.
@@ -53,5 +54,9 @@ What Rebound's results do and do not support, as of 2026-10-28. Numbers are in `
 ## Not established
 
 - That agents delay an API's recovery. Not observed at this load.
-- That a Retry-After guard prevents the lost goals. Plausible, untested.
+- That a Retry-After guard prevents lost goals in general. In agent-v2 it kept every goal (209 of 209 in three 10 s
+  trials and one 20 s trial), but the 20 s result is one pair, and it missed its pre-registered bar for refusals.
+- That requirement enforcement catches a misread customer. Code enforces what the model records, not what the
+  customer meant; a wrong extraction goes through.
+- That the bug hunter covers much ground. Its 24 scenarios were all time-of-day requests, and it found no failure.
 - Anything about other APIs, faults, gate settings, models or hardware.

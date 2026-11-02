@@ -123,6 +123,46 @@ def tool_test() -> list:
     return out
 
 
+def guard_study() -> list:
+    """Each guard trial beside its eval-v1 comparator (same manifest, gate on, different code)."""
+    rows = []
+    pairs = (("tr_0004", "tr_0001", "10 s · block 1"), ("tr_0010", "tr_0002", "10 s · block 2"),
+             ("tr_0016", "tr_0003", "10 s · block 3"), ("tr_0018", "tr_0004", "20 s"))
+    for base, guarded, name in pairs:
+        arms = {}
+        for key, d in (("off", EVAL / base), ("on", Path("runs/agent-v2-guard") / guarded)):
+            v = load_verdict(d)
+            bp = v["backpressure"]
+            arms[key] = {"id": d.name, "sums_ok": not verify_raw(d), "status": v["status"],
+                         "correct": v["goals"]["verdicts"].get("correct", 0), "goals": v["goals"]["scheduled"],
+                         "too_early": bp["violations"], "followed": bp["followed_by_attempt"],
+                         "signals": bp["signals"], "gap_p50": bp["gap_s_p50"], "t_rec": v["recovery"]["t_rec_s"],
+                         "lost": round(v["background"]["lost_service_D"])}
+        rows.append({"name": name, **arms})
+    return rows
+
+
+def agent_v2() -> dict:
+    def arm_counts(path: str) -> dict:
+        rows = json.loads(Path(path).read_text())
+        return {a: {"n": sum(r["arm"] == a for r in rows),
+                    "correct": sum(r["arm"] == a and r["verdict"] == "correct" for r in rows),
+                    "incorrect": sum(r["arm"] == a and r["verdict"] == "incorrect" for r in rows),
+                    "failed": sum(r["arm"] == a and r["verdict"] == "failed" for r in rows)}
+                for a in ("original", "hardened")}
+
+    held = json.loads(Path("runs/agent-v2/muse_held_out/results.json").read_text())
+    tools = {a: [r["tool_calls"] for r in held if r["arm"] == a and r["kind"] == "afternoon"]
+             for a in ("original", "hardened")}
+    hunt = json.loads(Path("runs/agent-v2/muse_hunt_2/findings.json").read_text())
+    scenarios = [json.loads(x) for x in Path("runs/agent-v2/muse_hunt_2/scenarios.jsonl").read_text().splitlines()]
+    return {"muse": arm_counts("runs/agent-v2/muse_held_out/results.json"),
+            "local": arm_counts("runs/agent-v2/local_dev_1/results.json"), "afternoon_tools": tools,
+            "hunt": {"n": len(scenarios), "verdicts": hunt["verdicts"], "candidates": len(hunt["candidates"]),
+                     "infeasible": sum(s["feasible"] == 0 for s in scenarios),
+                     "kinds": dict(Counter(s["constraint"]["kind"] for s in scenarios))}}
+
+
 def main() -> None:
     trials, all_series = eval_trials()
     summary = json.loads((EVAL / "summary.json").read_text())
@@ -133,6 +173,7 @@ def main() -> None:
         "criteria": {k: {"verdict": v.get("verdict")} for k, v in summary["acceptance"]["criteria"].items()},
         "excluded": summary["excluded"], "amplification": summary["amplification_vs_replay"],
         "replay": goal_replay("tr_0018"), "background": background_control(), "tools": tool_test(),
+        "guard": guard_study(), "v2": agent_v2(),
         "spend": round(sum(t["cost"] for t in trials), 2),
         "outcomes": dict(sum((Counter(t["verdicts"]) for t in trials), Counter())),
     }
