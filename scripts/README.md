@@ -10,4 +10,6 @@ Run these from the repository root. Frozen records cite several of these paths, 
 | `oracle_fixture_check.py` | Show the oracle catching a wrong but successful booking |
 | `queue.sh`, `eval_campaign.sh` | Run trial lists; `eval_campaign.sh` adds a spend cap |
 | `eval_specs.py`, `grid_manifests.py`, `write_freeze.py` | Generate the run list, gate grid and freeze record |
+| `agent_v2_run.py`, `bug_hunt.py`, `guard_campaign.sh`, `make_agent_v2.py` | Hardened-agent study: original vs hardened agent, bug hunter, guard trials, task and tool generation |
+| `build_ui.py` | Generate `ui/index.html` from recorded bundles |
 | `local_models/` | Local-model study: campaign runner and specs, smoke test, semantic cases, raw replay, tool-schema generator. Live runs use `ollama_relay_win.py`, which `harness/ollama.py` starts with the Windows Python |

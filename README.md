@@ -57,6 +57,16 @@ make trial MANIFEST=manifests/frozen/eval_v1.yaml CONDITION=agent GATE=off REPEA
 
 ## Results
 
+For the charts, download the repository and open [`ui/index.html`](ui/index.html) in a browser. It needs no server, and every number comes from the recorded trial bundles.
+
+The raw bundles are in the [`evidence-v1` release](https://github.com/sasikiran1/rebound/releases/tag/evidence-v1), one archive per experiment. To re-derive a result with no model key:
+
+```bash
+tar -xf eval-v1.tar && mkdir -p runs/eval-v1
+for f in eval-v1/tr_*.tgz; do tar -xzf "$f" -C runs/eval-v1; done
+make verify RUN=runs/eval-v1
+```
+
 Frozen evaluation `eval-v1`: Muse Spark 1.3 agents, task set B, three paired blocks plus one unfamiliar 20 s fault pair. Every trial, per block, is in [`docs/results.md`](docs/results.md).
 
 | | Gate off | Gate on |
