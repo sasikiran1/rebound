@@ -1,9 +1,9 @@
 """Local Ollama backend for the live agent (no paid API). Duck-types `client.responses.create` for agent.py.
 
 agent.py builds a Responses-style call (instructions, input items, tools). This module converts it to one Ollama
-/api/chat request, sends it through the Windows relay (scripts/ollama_relay_win.py) and converts the reply back to a
-Responses-shaped object. It never retries. Every raw request and response is written to `raw_dir` so tool calls and
-model text can be checked against the trial's event log.
+/api/chat request, sends it through the Windows relay (scripts/local_models/ollama_relay_win.py) and converts the
+reply back to a Responses-shaped object. It never retries. Every raw request and response is written to `raw_dir` so
+tool calls and model text can be checked against the trial's event log.
 
 Only full_history continuation is supported: Ollama keeps no server-side conversation.
 """
@@ -20,7 +20,7 @@ from types import SimpleNamespace as NS
 from harness.provider import ProviderFailed
 
 WIN_PY = "/mnt/c/Users/kiran/AppData/Local/Programs/Python/Python312/python.exe"
-RELAY = r"\\wsl.localhost\Ubuntu\home\kiran\rebound\scripts\ollama_relay_win.py"
+RELAY = r"\\wsl.localhost\Ubuntu\home\kiran\rebound\scripts\local_models\ollama_relay_win.py"
 
 
 class Relay:

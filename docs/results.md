@@ -471,11 +471,51 @@ recovered at once. Amplification vs replay (HTTP attempts per goal, fault cohort
 Agents ignored Retry-After every time, at a model step of about 0.8 s; this repeats the tr_0014 observation in
 three frozen blocks and the unfamiliar fault. Goal clients held 0.4–1.9% of in-flight time during the fault, so the
 extra requests did not move recovery; their cost fell on the agents' own goals (1 lost per gate-on trial at 10 s,
-8 at 20 s). That the violations caused those losses is inference: no trial tested a Retry-After guard
-(`--retry-after-guard`, merged from `audit-fixes`), so the guard's effect is unmeasured.
+8 at 20 s). eval-v1 alone could not show that the violations caused those losses; the guard trials below test it.
 
 ### What this means
 
 At a 10 s fault the system recovers fast on its own; the gate still spares ordinary users about 3,000 failed requests
 for 1 lost goal. At 20 s the gate is needed for recovery and halves lost service, but costs about 4% of correct agent
 goals. The agent-specific, measured behavior is total non-compliance with Retry-After.
+
+## Hardened-agent study agent-v2 (task set B base, Nov 1, 2026; `runs/agent-v2`, `runs/agent-v2-guard`)
+
+Pass marks fixed in `docs/agent_v2_protocol.md` before any paid run. Separate from eval-v1 and on newer code, so
+comparisons with eval-v1 trials cross configurations. Model spend for this study: $11.01 of a $22 cap (trials $9.14,
+plain-language runs $1.85, one $0.02 generator probe); cumulative $44.86.
+
+### B. Retry-After guard (Muse Spark 1.3, gate on, `manifests/frozen/eval_v1.yaml`, all four trials valid)
+
+| Fault | Comparator → guard trial | Correct of 209 | Sent too early | Median wait | Refusals | T_rec (s) | Lost service D |
+|---|---|---|---|---|---|---|---|
+| 10 s | tr_0004 → tr_0001 | 208 → 209 | 69/69 → 0/45 | 0.88 → 2.00 s | 69 → 45 | 10 → 14 | 5,176 → 5,200 |
+| 10 s | tr_0010 → tr_0002 | 208 → 209 | 74/74 → 0/39 | 0.80 → 2.00 s | 74 → 39 | 10 → 10 | 5,030 → 5,474 |
+| 10 s | tr_0016 → tr_0003 | 208 → 209 | 68/68 → 0/44 | 0.90 → 2.00 s | 68 → 44 | 10 → 10 | 5,011 → 5,015 |
+| 20 s | tr_0018 → tr_0004 | 201 → 209 | 139/139 → 0/113 | 0.84 → 2.00 s | 147 → 113 | 10 → 10 | 10,212 → 10,190 |
+
+Pre-registered result: no request sent too early, **met**; correct goals within 1 of the comparator, **met**; refused
+requests at most half of the comparator's, **not met** (65%, 53%, 65%). So the study's three-part test is not met as
+written. The goal losses are gone: 0 lost in 836 scheduled goals, against 11 lost in the comparators. Recovery time and
+lost ordinary-user service did not improve: the guard protects the agent's work, not the server. The 20 s result is
+one pair. With the guard, the gate at 20 s no longer costs correct goals: 209 against gate-off tr_0017's 209, with
+D 10,190 against 19,491 and T_rec 10 s against 34 s, across configurations.
+
+### A. Plain-language requests (18 held-out messages, no fault, gate off)
+
+| Arm | Correct | Incorrect | Tool calls on afternoon tasks |
+|---|---|---|---|
+| original, Muse Spark 1.3 | 17 | 1 (booked 10:00 for "6 pm only", MI04) | 7–12 |
+| hardened, Muse Spark 1.3 | 18 | 0 | 5–6 |
+
+Pre-registered result: hardened at least +4 correct, **not met** (+1). Hardened incorrect not above original, met. Muse
+already reads these messages well. On the 18 dev tasks that shaped the design, a weaker local model (gemma4) went from
+7 to 17 correct, with 4 and 1 incorrect; those runs are not held out and predate one task-set fix (MI03's constraint).
+Requirement enforcement blocked 0 bookings on Muse (`blocks = 0` in all 18 hardened goals).
+
+### C. Bug hunter
+
+`muse_hunt` (kept, failed): 86 of 90 generated scenarios rejected, because default reasoning used the whole output cap
+and left no visible JSON; 4 run, 4 correct; $0.66. `muse_hunt_2` (low reasoning effort): 24 of 24 generated, 24 correct,
+0 candidates, $0.48. All 24 were time-of-day requests and 4 were infeasible, so the search was narrow. A local trial run
+produced one candidate, a `generator_mismatch`: the message said "before noon", the constraint added a 09:00 floor.

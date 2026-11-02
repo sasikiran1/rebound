@@ -57,6 +57,16 @@ make trial MANIFEST=manifests/frozen/eval_v1.yaml CONDITION=agent GATE=off REPEA
 
 ## Results
 
+For the charts, download the repository and open [`ui/index.html`](ui/index.html) in a browser. It needs no server, and every number comes from the recorded trial bundles.
+
+The raw bundles are in the [`evidence-v1` release](https://github.com/sasikiran1/rebound/releases/tag/evidence-v1), one archive per experiment. To re-derive a result with no model key:
+
+```bash
+tar -xf eval-v1.tar && mkdir -p runs/eval-v1
+for f in eval-v1/tr_*.tgz; do tar -xzf "$f" -C runs/eval-v1; done
+make verify RUN=runs/eval-v1
+```
+
 Frozen evaluation `eval-v1`: Muse Spark 1.3 agents, task set B, three paired blocks plus one unfamiliar 20 s fault pair. Every trial, per block, is in [`docs/results.md`](docs/results.md).
 
 | | Gate off | Gate on |
@@ -71,7 +81,7 @@ Frozen evaluation `eval-v1`: Muse Spark 1.3 agents, task set B, three paired blo
 
 - **A short fault does not need the gate:** both arms recover fast, so by the frozen rules the gate is not needed at 10 s. It still spares ordinary users about 3,000 failed requests for one lost goal.
 - **A longer fault does, with a cost:** at 20 s the gate halves lost service and restores health at once, but agents lose 8 correct goals (beyond the predeclared limit of 3; one trial pair, weaker evidence).
-- **Agents ignore Retry-After, every time.** The scripted client sent 3 of 23 early. Agents were only 0.4–1.9% of the API's load during the fault, so this did not slow recovery; it cost the agents' own goals. A runtime guard (`--retry-after-guard`) is implemented but has not been run in a trial.
+- **Agents ignore Retry-After, every time.** The scripted client sent 3 of 23 early. Agents were only 0.4–1.9% of the API's load during the fault, so this did not slow recovery; the goals it cost were the agents' own. With a runtime guard that waits out Retry-After (`--retry-after-guard`), no request went early and no goal was lost: 209 of 209 at 10 s and at 20 s. That missed one pre-registered bar (refusals fell to 53–65%, the bar was 50%) and did not improve recovery. See [`docs/agent_v2_protocol.md`](docs/agent_v2_protocol.md) and [`docs/results.md`](docs/results.md).
 - **Separate finding (local models, no fault):** when the tool hid valid afternoon slots behind a 4 KB result cap, one model booked 08:00 and 11:00 against "15:00 or later", and the original date-only oracle passed those bookings. A start-time filter fixed 8 of 8 such cases; the oracle now checks stated constraints. See [`docs/ollama_protocol.md`](docs/ollama_protocol.md) for the local-model rules.
 
 ## What this is not
