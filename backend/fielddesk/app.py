@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from fielddesk.db import current_stats, db
 from fielddesk.gate import Gate, GateMiddleware
+from fielddesk.policy import PolicyMiddleware
 from fielddesk.requestlog import RequestLogMiddleware, counters
 from fielddesk.sampler import Sampler
 
@@ -59,6 +60,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="FieldDesk", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 # Starlette runs the last-added middleware first: request log (outermost) -> gate -> routes.
 app.add_middleware(GateMiddleware, gate=gate, retry_after_s=int(os.environ.get("GATE_RETRY_AFTER_S", "2")))
+# Off by default (AGENT_POLICY, PROBE_REFUSE_FIRST); see fielddesk/policy.py.
+app.add_middleware(PolicyMiddleware, retry_after_s=int(os.environ.get("GATE_RETRY_AFTER_S", "2")))
 app.add_middleware(RequestLogMiddleware, path=os.environ.get("REQUEST_LOG"))
 
 
