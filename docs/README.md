@@ -13,5 +13,7 @@
 | [spec.md](spec.md) | Original design; where it disagrees with the code or `protocol.md`, those win |
 | [goal_preservation.md](goal_preservation.md), [goal_preservation_results.md](goal_preservation_results.md) | Experimental finite-goal API, mechanics checks and limits |
 | [goal_preservation_live_protocol.md](goal_preservation_live_protocol.md), [goal_preservation_live_results.md](goal_preservation_live_results.md) | Frozen local-agent feasibility cohort: all 96 sessions and limitations |
+| [interface_competence_protocol.md](interface_competence_protocol.md), [interface_competence_results.md](interface_competence_results.md) | Can a local agent tell an evaluation from a booking? Effect-status wording versus the cohort's wording |
+| [policy_probe_protocol.md](policy_probe_protocol.md) | Refusal probe: a served agent policy, a wait tool, and a pacing sweep |
 
 Frozen files keep their paths because the analyzer fingerprint and the freeze records refer to them.

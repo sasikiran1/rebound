@@ -88,6 +88,8 @@ class GoalState:
     requirements: dict | None = None  # record_requirements: what the model says the customer asked for
     seen_slots: dict[int, dict] = field(default_factory=dict)  # slots actually shown to the model
     requirement_blocks: int = 0
+    waits: int = 0  # wait tool (policy probe tool set)
+    wait_s: float = 0.0
 
 
 def requirement_problem(requirements: dict | None, slot: dict | None) -> str | None:
@@ -260,6 +262,14 @@ class ToolAdapter:
             state.deferred_reason = args["reason"]
             self.events.emit("tool.op", **ids, status="deferred", latency_ms=0.0, attempts=0, reason=args["reason"])
             return {"deferred": True}
+
+        if name == "wait":  # policy probe tool set: a pause that sends no request
+            seconds = float(args["seconds"])
+            state.waits += 1
+            state.wait_s += seconds
+            await self.sleep(seconds)
+            self.events.emit("tool.op", **ids, status="waited", latency_ms=round(seconds * 1000, 1), attempts=0)
+            return {"waited_s": seconds}
 
         if name == "record_requirements":
             state.requirements = args

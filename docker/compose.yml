@@ -62,6 +62,8 @@ services:
       GATE_QUEUE_MAX: ${GATE_QUEUE_MAX:-16}
       GATE_QUEUE_WAIT_MS: ${GATE_QUEUE_WAIT_MS:-1500}
       GATE_RETRY_AFTER_S: ${GATE_RETRY_AFTER_S:-2}
+      AGENT_POLICY: ${AGENT_POLICY:-off}
+      PROBE_REFUSE_FIRST: ${PROBE_REFUSE_FIRST:-0}
       REQUEST_LOG: /logs/backend.jsonl
       SAMPLE_LOG: /logs/samples.jsonl
     volumes:
