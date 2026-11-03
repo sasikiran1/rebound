@@ -1,0 +1,477 @@
+# Held-out cases. Frozen before prompt tuning; never used for development feedback. See README.md for the format.
+
+# --- straightforward -------------------------------------------------------------------------------------------
+- id: H01
+  kind: standard
+  customer: Ruth Okonkwo
+  technicians: {nadia: Nadia Brooks, theo: Theo Grant}
+  current: tue 14:00 nadia
+  open: [wed 10:00 nadia, wed2 08:30 theo, wed2 13:00 nadia, thu2 09:00 nadia]
+  messages:
+    - "Can we do Wednesday the 18th instead? Any time that day."
+  expected:
+    authorized: [[wed2 08:30 theo, wed2 13:00 nadia]]
+    final: [wed2 08:30 theo, wed2 13:00 nadia]
+    questions: 0
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-18]}]
+
+- id: H02
+  kind: standard
+  customer: Daniel Kim
+  technicians: {owen: Owen Hale, lucia: Lucia Ferro}
+  current: tue 15:00 lucia
+  open: [fri 09:00 owen, fri 14:00 lucia, thu 09:00 owen]
+  messages:
+    - "I need it moved to this Friday, ideally in the morning but the afternoon is OK too."
+  expected:
+    authorized: [[fri 09:00 owen, fri 14:00 lucia]]
+    final: [fri 09:00 owen, fri 14:00 lucia]
+    preferred: [fri 09:00 owen]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-13]}
+      - {kind: start_before, time: "12:00", strength: prefer}
+
+- id: H03
+  kind: standard
+  customer: Sofia Marquez
+  technicians: {ravi: Ravi Shah, elena: Elena Cruz}
+  current: tue 10:00 ravi
+  open: [thu 12:30 ravi, thu 13:00 elena, thu 15:30 ravi, thu 16:30 elena, fri 14:00 ravi]
+  messages:
+    - "Please reschedule to Thursday, sometime between 1 and 4 in the afternoon."
+  expected:
+    authorized: [[thu 13:00 elena, thu 15:30 ravi]]
+    final: [thu 13:00 elena, thu 15:30 ravi]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-12]}
+      - {kind: start_at_or_after, time: "13:00"}
+      - {kind: start_before, time: "16:00"}
+
+- id: H04
+  kind: standard
+  customer: Marcus Webb
+  technicians: {rosa: Rosa Lindqvist, ben: Ben Adeyemi}
+  current: tue 09:30 ben
+  open: [mon2 09:00 rosa, mon2 11:00 ben, tue2 09:00 rosa]
+  messages:
+    - "Can Rosa come on Monday the 16th? Any time works for me."
+  expected:
+    authorized: [[mon2 09:00 rosa]]
+    final: [mon2 09:00 rosa]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-16]}
+      - {kind: technician_is, technician_ids: [rosa]}
+
+# --- conditional alternatives ----------------------------------------------------------------------------------
+- id: H05
+  kind: conditional
+  customer: Helen Price
+  technicians: {iris: Iris Novak, paul: Paul Mensah}
+  current: tue 11:30 iris
+  open: [tue2 10:00 iris, tue2 13:30 paul, wed2 09:00 iris]
+  messages:
+    - "Tuesday the 17th in the afternoon would be best. If that's not possible, Wednesday the 18th any time before 11."
+  expected:
+    authorized: [[tue2 13:30 paul]]
+    final: [tue2 13:30 paul]
+    questions: 0
+  form:
+    rules: []
+    alternatives:
+      - label: Tuesday 17th afternoon
+        rules: [{kind: on_dates, dates: [2026-11-17]}, {kind: start_at_or_after, time: "12:00"}]
+      - label: Wednesday 18th before 11
+        rules: [{kind: on_dates, dates: [2026-11-18]}, {kind: start_before, time: "11:00"}]
+
+- id: H06
+  kind: conditional
+  customer: Omar Siddiqui
+  technicians: {kim: Kim Larsen, lou: Lou Bianchi}
+  current: tue 13:30 lou
+  open: [thu 10:00 lou, thu 14:00 lou, fri 09:30 lou, fri 10:30 kim, fri 15:00 kim]
+  messages:
+    - "I'd like Kim on Thursday. If Kim can't make Thursday, then anyone on Friday morning."
+  expected:
+    authorized: [[fri 09:30 lou, fri 10:30 kim]]
+    final: [fri 09:30 lou, fri 10:30 kim]
+    questions: 0
+  form:
+    rules: []
+    alternatives:
+      - label: Kim on Thursday
+        rules: [{kind: on_dates, dates: [2026-11-12]}, {kind: technician_is, technician_ids: [kim]}]
+      - label: Friday morning, anyone
+        rules: [{kind: on_dates, dates: [2026-11-13]}, {kind: start_before, time: "12:00"}]
+
+- id: H07
+  kind: conditional
+  customer: Claire Dubois
+  technicians: {tom: Tom Becker, ana: Ana Sousa}
+  current: tue 08:00 ana
+  open: [wed 14:30 tom, wed 15:00 ana, thu 14:30 ana, thu 16:00 tom, thu 11:00 tom]
+  taken: [wed 14:30 tom]
+  messages:
+    - "Wednesday after 2 with Tom works best; otherwise Thursday after 2 with anyone."
+  expected:
+    authorized: [[wed 14:30 tom, thu 14:30 ana, thu 16:00 tom]]
+    final: [thu 14:30 ana, thu 16:00 tom]
+    questions: 0
+  form:
+    rules: []
+    alternatives:
+      - label: Wednesday after 2 with Tom
+        rules:
+          - {kind: on_dates, dates: [2026-11-11]}
+          - {kind: start_at_or_after, time: "14:00"}
+          - {kind: technician_is, technician_ids: [tom]}
+      - label: Thursday after 2, anyone
+        rules: [{kind: on_dates, dates: [2026-11-12]}, {kind: start_at_or_after, time: "14:00"}]
+
+- id: H08
+  kind: conditional
+  customer: Victor Lindgren
+  technicians: {greta: Greta Holm, sami: Sami Okoro}
+  current: tue 15:30 greta
+  open: [fri 13:00 greta, mon2 13:00 sami, tue2 09:00 greta]
+  messages:
+    - "Friday morning, or if not, Monday the 16th in the morning. Please don't book anything else without asking me."
+  replies:
+    - "Tuesday the 17th at 9 works for me."
+  expected:
+    authorized: [[], [tue2 09:00 greta]]
+    final: [tue2 09:00 greta]
+    questions: 1
+  form:
+    rules: []
+    alternatives:
+      - label: Friday morning
+        rules: [{kind: on_dates, dates: [2026-11-13]}, {kind: start_before, time: "12:00"}]
+      - label: Monday 16th morning
+        rules: [{kind: on_dates, dates: [2026-11-16]}, {kind: start_before, time: "12:00"}]
+  form_turns:
+    - rules:
+        - {kind: on_dates, dates: [2026-11-17]}
+        - {kind: start_at_or_after, time: "09:00"}
+        - {kind: start_before, time: "09:30"}
+
+# --- negation --------------------------------------------------------------------------------------------------
+- id: H09
+  kind: negation
+  customer: Priyanka Das
+  technicians: {carla: Carla Diaz, femi: Femi Ade}
+  current: tue 12:00 carla
+  open: [mon2 09:00 carla, mon2 10:30 femi, wed2 11:00 carla, tue2 08:30 femi, thu2 13:00 carla]
+  messages:
+    - "Any day next week except Wednesday, and not first thing in the morning. Nothing before 10."
+  expected:
+    authorized: [[mon2 10:30 femi, thu2 13:00 carla]]
+    final: [mon2 10:30 femi, thu2 13:00 carla]
+    questions: 0
+  form:
+    rules:
+      - {kind: dates_between, date_from: 2026-11-16, date_to: 2026-11-20}
+      - {kind: not_on_weekdays, weekdays: [wed]}
+      - {kind: start_at_or_after, time: "10:00"}
+
+- id: H10
+  kind: negation
+  customer: George Tanaka
+  technicians: {victor: Victor Hahn, nina: Nina Petrov}
+  current: tue 10:30 victor
+  open: [thu 09:00 victor, thu 13:00 victor, fri 11:00 nina, fri 15:00 victor, mon2 09:00 nina]
+  messages:
+    - "Anyone but Victor, please. Thursday or Friday is fine."
+  expected:
+    authorized: [[fri 11:00 nina]]
+    final: [fri 11:00 nina]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-12, 2026-11-13]}
+      - {kind: technician_is_not, technician_ids: [victor]}
+
+- id: H11
+  kind: negation
+  customer: Fatima Noor
+  technicians: {june: June Park, ali: Ali Haddad}
+  current: tue 09:00 ali
+  open: [wed 14:00 june, thu 15:00 ali, mon2 14:30 june, wed 10:00 ali, fri 13:00 june]
+  messages:
+    - "I'm away on the 12th and 13th. Any other day this week or next is fine, but afternoons only."
+  expected:
+    authorized: [[wed 14:00 june, mon2 14:30 june]]
+    final: [wed 14:00 june, mon2 14:30 june]
+    questions: 0
+  form:
+    rules:
+      - {kind: dates_between, date_from: 2026-11-10, date_to: 2026-11-20}
+      - {kind: not_on_dates, dates: [2026-11-12, 2026-11-13]}
+      - {kind: start_at_or_after, time: "12:00"}
+
+# --- references to booking history -----------------------------------------------------------------------------
+- id: H12
+  kind: reference
+  customer: Laura Bianchi
+  technicians: {hana: Hana Sato, raj: Raj Patel}
+  history: [{date: 2026-10-02, time: "09:00", tech: raj}, {date: 2026-10-28, time: "13:00", tech: hana}]
+  current: tue 14:30 raj
+  open: [thu 10:00 raj, thu 14:00 hana, fri 09:00 raj]
+  messages:
+    - "Same technician as my last visit please. Thursday or Friday."
+  expected:
+    authorized: [[thu 14:00 hana]]
+    final: [thu 14:00 hana]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-12, 2026-11-13]}
+      - {kind: technician_is, technician_ids: [hana]}
+
+- id: H13
+  kind: reference
+  customer: Samuel Ortiz
+  service: gas_safety_check
+  technicians:
+    felix: Felix Braun
+    ivo: Ivo Mares
+    gina: {name: Gina Russo, skills: [hvac]}
+  history:
+    - {date: 2026-10-15, time: "10:00", tech: felix, service: boiler_service}
+    - {date: 2026-10-29, time: "11:00", tech: gina, service: hvac_repair}
+  current: tue 13:00 ivo
+  open: [mon2 09:00 ivo, tue2 13:00 felix, wed2 10:00 felix]
+  messages:
+    - "Whoever did my boiler service in October did a great job. Can I get them again? Any day next week."
+  expected:
+    authorized: [[tue2 13:00 felix, wed2 10:00 felix]]
+    final: [tue2 13:00 felix, wed2 10:00 felix]
+    questions: 0
+  form:
+    rules:
+      - {kind: dates_between, date_from: 2026-11-16, date_to: 2026-11-20}
+      - {kind: technician_is, technician_ids: [felix]}
+
+- id: H14
+  kind: reference
+  customer: Irene Volkova
+  technicians: {carl: Carl Jensen, dee: Dee Walsh}
+  history: [{date: 2026-11-03, time: "10:00", tech: carl}]
+  current: tue 16:00 dee
+  open: [wed 09:00 carl, wed 11:00 dee, wed 15:00 carl]
+  messages:
+    - "Not the technician who came last time, please. Any time on Wednesday works."
+  expected:
+    authorized: [[wed 11:00 dee]]
+    final: [wed 11:00 dee]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-11]}
+      - {kind: technician_is_not, technician_ids: [carl]}
+
+- id: H15
+  kind: reference
+  customer: Kwame Mensah
+  technicians: {mila: Mila Horvat, ken: Ken Ito}
+  current: tue 10:30 mila
+  open: [fri 10:30 ken, fri 09:00 mila, fri 11:00 mila]
+  messages:
+    - "Keep the same time of day as my current booking, just move it to Friday."
+  expected:
+    authorized: [[fri 10:30 ken]]
+    final: [fri 10:30 ken]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-13]}
+      - {kind: start_at_or_after, time: "10:30"}
+      - {kind: start_before, time: "11:00"}
+
+# --- corrections -----------------------------------------------------------------------------------------------
+- id: H16
+  kind: correction
+  customer: Anna Kowalczyk
+  technicians: {zoe: Zoe Clarke, yusuf: Yusuf Demir}
+  current: tue 13:00 yusuf
+  open: [thu 09:00 zoe, thu 14:00 yusuf, fri 09:00 zoe]
+  messages:
+    - "Thursday afternoon please."
+    - "Sorry, I meant Thursday morning. The afternoon is when I pick up my kids."
+  expected:
+    authorized: [[thu 14:00 yusuf], [thu 09:00 zoe]]
+    final: [thu 09:00 zoe]
+    questions: 0
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-12]}, {kind: start_at_or_after, time: "12:00"}]
+  form_turns:
+    - rules: [{kind: on_dates, dates: [2026-11-12]}, {kind: start_before, time: "12:00"}]
+
+- id: H17
+  kind: correction
+  customer: Diego Alvarez
+  technicians: {marta: Marta Kowalski, omar: Omar Farouk}
+  current: tue 11:00 omar
+  open: [fri 10:00 marta, fri 13:30 omar, fri 15:00 marta]
+  messages:
+    - "Friday with Marta, any time."
+    - "One change: on Friday it has to be after 1pm."
+  expected:
+    authorized: [[fri 10:00 marta, fri 15:00 marta], [fri 15:00 marta]]
+    final: [fri 15:00 marta]
+    questions: 0
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-13]}, {kind: technician_is, technician_ids: [marta]}]
+  form_turns:
+    - rules:
+        - {kind: on_dates, dates: [2026-11-13]}
+        - {kind: technician_is, technician_ids: [marta]}
+        - {kind: start_at_or_after, time: "13:00"}
+
+- id: H18
+  kind: correction
+  customer: Yuki Mori
+  technicians: {lars: Lars Berg, noor: Noor Aziz}
+  current: tue 10:00 lars
+  open: [wed 13:00 lars, thu 15:30 noor, thu 16:30 lars, fri 10:00 lars]
+  messages:
+    - "Wednesday after 3 please, but check with me before choosing another day."
+  replies:
+    - "Thursday is fine, but it needs to be 4 or later."
+  expected:
+    authorized: [[], [thu 16:30 lars]]
+    final: [thu 16:30 lars]
+    questions: 1
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-11]}, {kind: start_at_or_after, time: "15:00"}]
+  form_turns:
+    - rules: [{kind: on_dates, dates: [2026-11-12]}, {kind: start_at_or_after, time: "16:00"}]
+
+# --- unavailable choices needing renewed permission ------------------------------------------------------------
+- id: H19
+  kind: permission
+  customer: Paolo Ricci
+  technicians: {leo: Leo Martin, rob: Rob Quinn}
+  current: tue 09:00 rob
+  open: [mon2 08:30 rob, mon2 14:00 leo, tue2 09:00 leo]
+  messages:
+    - "Monday the 16th in the morning with Leo. If Leo isn't free, ask me first."
+  replies:
+    - "Okay, Rob on Monday morning is fine."
+  expected:
+    authorized: [[], [mon2 08:30 rob]]
+    final: [mon2 08:30 rob]
+    questions: 1
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-16]}
+      - {kind: start_before, time: "12:00"}
+      - {kind: technician_is, technician_ids: [leo]}
+  form_turns:
+    - rules:
+        - {kind: on_dates, dates: [2026-11-16]}
+        - {kind: start_before, time: "12:00"}
+        - {kind: technician_is, technician_ids: [rob]}
+
+- id: H20
+  kind: permission
+  customer: Nora Haddad
+  technicians: {pia: Pia Lund, hugo: Hugo Silva}
+  current: tue 15:00 hugo
+  open: [thu 10:00 pia, fri 09:00 pia, mon2 10:00 hugo]
+  taken: [thu 10:00 pia]
+  messages:
+    - "This Thursday, any time, but nothing later than that. I'm traveling from Friday."
+  replies:
+    - "No, then just leave it where it is."
+  expected:
+    authorized: [[thu 10:00 pia], [thu 10:00 pia]]
+    final: []
+    questions: 1
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-12], strength: must}]
+  form_turns:
+    - {decline: true}
+
+- id: H21
+  kind: permission
+  customer: Ben Carter
+  technicians: {dana: Dana Whitfield, eli: Eli Brandt}
+  history: [{date: 2026-10-21, time: "09:00", tech: dana}]
+  current: tue 14:00 eli
+  open: [tue2 09:00 eli, tue2 11:00 dana, wed2 10:00 dana, wed2 14:00 eli]
+  taken: [tue2 11:00 dana]
+  messages:
+    - "I want Dana again, on Tuesday the 17th."
+  replies:
+    - "Wednesday with Dana works too."
+  expected:
+    authorized: [[tue2 11:00 dana], [tue2 11:00 dana, wed2 10:00 dana]]
+    final: [wed2 10:00 dana]
+    questions: 1
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-17]}, {kind: technician_is, technician_ids: [dana]}]
+  form_turns:
+    - rules: [{kind: on_dates, dates: [2026-11-17, 2026-11-18]}, {kind: technician_is, technician_ids: [dana]}]
+
+# --- must remain unresolved ------------------------------------------------------------------------------------
+- id: H22
+  kind: unresolved
+  customer: Lena Hoffmann
+  technicians: {ada: Ada Wright, bo: Bo Lindahl, cy: Cy Okafor}
+  history:
+    - {date: 2026-09-08, time: "10:00", tech: ada}
+    - {date: 2026-09-22, time: "14:00", tech: bo}
+    - {date: 2026-10-30, time: "09:00", tech: cy}
+  current: tue 11:00 cy
+  open: [wed 10:00 ada, thu 11:00 bo, fri 09:00 cy]
+  messages:
+    - "Could I have the same technician I had in September? Any day this week works."
+  replies:
+    - "I'm not sure which one it was. Let me check and call you back."
+  expected:
+    authorized: [[], []]
+    final: []
+    questions: 1
+  form: null
+
+- id: H23
+  kind: unresolved
+  customer: Tomasz Nowak
+  technicians: {hal: Hal Jones, uma: Uma Rao}
+  current: tue 12:30 uma
+  open: [wed 10:00 hal, mon2 09:00 uma]
+  messages:
+    - "Can you move it to December 15th? Morning is best."
+  replies:
+    - "Then leave it as it is for now."
+  expected:
+    authorized: [[], []]
+    final: []
+    questions: null
+  form: null
+
+- id: H24
+  kind: unresolved
+  customer: Mei Chen
+  technicians: {ola: Ola Berg, sid: Sid Kapoor}
+  current: tue 14:30 ola
+  open: [fri 10:00 ola, mon2 09:00 sid]
+  messages:
+    - "Saturday the 14th only. It's the only day I'm home."
+  replies:
+    - "Then don't change it."
+  expected:
+    authorized: [[], []]
+    final: []
+    questions: 1
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-14], strength: must}]
+  form_turns:
+    - {decline: true}
