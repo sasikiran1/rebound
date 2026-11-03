@@ -14,7 +14,7 @@ def rules(rs):
         val = {k: r[k] for k in ("date_from", "date_to", "dates", "weekdays", "time", "technician_ids", "only_on_dates")
                if k in r}
         out.append(f"{r.get('id', '?')} {r['kind']}[{r['strength']}] {json.dumps(val)} <{r['quote']}>"
-                   + (f" ref={r['reference']}" if r.get("reference") else ""))
+                   + (f" from_appointment={r['from_appointment']}" if r.get("from_appointment") else ""))
     return out
 
 

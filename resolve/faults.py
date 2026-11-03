@@ -80,12 +80,12 @@ class Env:
         await self.store.reset(rid)
         return case, rid
 
-    async def structured(self, case, rid: str, form: dict | None = None) -> list:
+    async def structured(self, case, rid: str, form: dict | None = None, confirm: bool = False) -> list:
         """Open a request with a structured (form) intent; returns the turn times."""
         facts = await Resolve(self.store, self.api, None, C.TODAY, C.HORIZON_DAYS).load_facts(
             case.customer_id, case.appointment_id)
         await self.store.create(rid, case.customer_id, case.appointment_id, case.region, case.service, C.TODAY,
-                                C.HORIZON_DAYS, facts)
+                                C.HORIZON_DAYS, facts, confirm)
         times = [await self.now()]
         svc = Resolve(self.store, self.api, None, C.TODAY, C.HORIZON_DAYS)
         await svc.approve_structured(rid, form_intent(case, form or case.raw["form"]), "form", "structured")
@@ -227,6 +227,23 @@ async def check_correction(env: Env) -> dict:
             "note": "the first canned patch replaces the Friday rule with a time rule; it must be rejected"}
 
 
+async def check_confirm(env: Env) -> dict:
+    """Product mode: an authorized slot is still not booked until the customer says yes to that exact slot."""
+    case, rid = await env.fresh("F2", "confirm_mode")
+    times = await env.structured(case, rid, confirm=True)
+    w = Worker(env.store, env.api, owner="w-confirm")
+    first = await w.run_once(rid)
+    before = len(await env.changes(case))
+    times.append(await env.now())
+    svc = Resolve(env.store, env.api, None, C.TODAY, C.HORIZON_DAYS)  # no model: a plain yes is matched exactly
+    await svc.customer_says(rid, "Yes, please book it.")
+    second = await w.run_once(rid)
+    v = await verdict(env.oracle, case, times)
+    ok = (first["result"] == "needs_input" and first["kind"] == "confirm" and before == 0
+          and second["result"] == "completed" and v["verdict"] == "correct")
+    return {"passed": ok, "first_pass": first, "changes_before_yes": before, "second_pass": second, "verdict": v}
+
+
 INVALID = {
     "reversed_range": {"kind": "dates_between", "date_from": "2026-11-13", "date_to": "2026-11-11"},
     "not_a_date": {"kind": "on_dates", "dates": ["2026-11-31"]},
@@ -279,6 +296,7 @@ CHECKS = {
     "lost_ack": check_lost_ack,
     "renewed_permission": check_renewed_permission,
     "correction_preserves": check_correction,
+    "confirm_mode": check_confirm,
 }
 
 

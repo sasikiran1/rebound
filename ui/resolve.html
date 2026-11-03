@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resolve</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e4e2dc;
+  --accent: #2f5bd3; --ok: #1f7a4d; --warn: #a86400; --bad: #b42318; --chip: #efede8;
+  --cust: #e9effc; --asst: #f3f2ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151514; --panel: #1e1e1c; --ink: #ecebe7; --muted: #a09e98; --line: #33322f;
+    --accent: #7b9cff; --ok: #4cc38a; --warn: #f0a640; --bad: #ff7a6b; --chip: #2a2a27;
+    --cust: #23304f; --asst: #262624;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151514; --panel: #1e1e1c; --ink: #ecebe7; --muted: #a09e98; --line: #33322f;
+  --accent: #7b9cff; --ok: #4cc38a; --warn: #f0a640; --bad: #ff7a6b; --chip: #2a2a27;
+  --cust: #23304f; --asst: #262624;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 14px 20px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+header .who { color: var(--muted); }
+select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); max-width: 100%; }
+.label { font-size: 12px; color: var(--muted); padding: 2px 8px; border-radius: 99px; background: var(--chip); }
+.pipeline { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 20px 0; }
+.stage { padding: 6px 12px; border-radius: 99px; background: var(--chip); color: var(--muted); font-size: 13px; }
+.stage.on { background: var(--accent); color: #fff; }
+.stage.on.completed { background: var(--ok); }
+.stage.on.unresolved { background: var(--bad); }
+.stage.on.needs_input { background: var(--warn); }
+main { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, .95fr); gap: 16px;
+  padding: 16px 20px 24px; }
+@media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+  min-width: 0; }
+section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; }
+.turn { padding: 9px 12px; border-radius: 10px; margin: 0 0 8px; max-width: 92%; overflow-wrap: anywhere; }
+.turn .text { white-space: pre-wrap; }
+.turn.customer { background: var(--cust); margin-left: auto; }
+.turn.assistant { background: var(--asst); }
+.turn .meta { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.turn.q { border-left: 3px solid var(--warn); }
+.ver { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.ver:first-of-type { border-top: 0; padding-top: 0; }
+.ver h3 { font-size: 14px; margin: 0 0 6px; }
+.ver .by { font-weight: normal; color: var(--muted); font-size: 12px; }
+.rule { display: flex; gap: 8px; align-items: baseline; margin: 4px 0; flex-wrap: wrap; }
+.rule .q { color: var(--muted); font-size: 12px; font-style: italic; overflow-wrap: anywhere; }
+.chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--chip); color: var(--muted); }
+.chip.must { color: var(--bad); } .chip.prefer { color: var(--ok); }
+.chip.add { background: var(--ok); color: #fff; } .chip.chg { background: var(--warn); color: #fff; }
+.removed { color: var(--muted); text-decoration: line-through; font-size: 13px; }
+.cand { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; }
+.event { font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.event time { color: var(--muted); font-size: 11px; margin-right: 6px; }
+.sql { grid-column: 1 / -1; }
+.verdict { font-size: 18px; font-weight: 600; }
+.verdict.good { color: var(--ok); } .verdict.badv { color: var(--bad); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.empty { color: var(--muted); font-size: 13px; }
+.note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Resolve</h1>
+  <select id="pick" aria-label="Request"></select>
+  <span class="who" id="who"></span>
+  <span class="label">synthetic fixture · scripted customer</span>
+</header>
+<div class="pipeline" id="pipeline"></div>
+<main>
+  <section><h2>Conversation</h2><div id="conv"></div></section>
+  <section><h2>What we understood</h2><div id="understood"></div></section>
+  <section>
+    <h2>Real alternatives</h2><div id="alts"></div>
+    <h2 style="margin-top:16px">Activity</h2><div id="activity"></div>
+  </section>
+  <section class="sql"><h2>Independent SQL check</h2><div id="sql"></div></section>
+</main>
+<script>
+const STAGES = [["needs_input", "Needs customer input"], ["ready", "Pending"], ["claimed", "Executing"],
+                ["completed", "Completed"], ["unresolved", "Unresolved"]];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const hhmm = iso => new Date(iso).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+let current = new URLSearchParams(location.search).get("rid");
+
+function activity(e) {
+  const d = e.data;
+  switch (e.kind) {
+    case "interpret": return d.problems.length ? `Interpretation rejected: ${esc(d.problems[0])}` :
+      `Interpreted the request (${d.attempts} model call${d.attempts > 1 ? "s" : ""})`;
+    case "revise": return d.decision === "declined" ? "Customer declined" : d.problems.length ?
+      `Change rejected: ${esc(d.problems[0])}` : "Customer's change applied as a new version";
+    case "worker.claimed": return `Worker started version ${d.version}` +
+      (d.pending_attempt ? " (an earlier attempt is unconfirmed: reconciling first)" : "");
+    case "worker.retry_later": return /timeout|connection|http_5/.test(d.reason) ?
+      "Booking system unavailable: will retry" : `Will retry (${esc(d.reason)})`;
+    case "worker.decided": return {book: "A matching time is open", confirm: "Asking the customer to confirm the slot",
+      permission: "No time meets everything: asking the customer", no_options: "Nothing open fits the fixed limits",
+      clarify: "Unclear request: asking the customer"}[d.decision] + ` (${d.open_slots} open slots checked)`;
+    case "worker.reconciled": return d.outcome === "committed" ?
+      "Earlier attempt had been applied: confirmed it, no second booking" : "Earlier attempt had not been applied";
+    case "worker.slot_taken": return "That time was just taken: searching again";
+    case "worker.completed": return `Booking confirmed${d.replayed ? " (replayed, not repeated)" : ""}`;
+    default: return esc(e.kind);
+  }
+}
+
+function render(r) {
+  $("who").textContent = `${r.customer.name} · moving ${r.appointment.service_name}, now ${r.appointment.starts_at.replace("T", " ")}`;
+  $("pipeline").innerHTML = STAGES.map(([k, l]) =>
+    `<span class="stage ${k} ${r.state === k ? "on" : ""}">${l}</span>`).join("");
+  $("conv").innerHTML = r.turns.map(t => `<div class="turn ${t.role} ${["permission", "clarify", "no_options", "horizon", "confirm"].includes(t.kind) ? "q" : ""}"><div class="meta">${t.role === "customer" ? "Customer" : "Resolve"} · ${hhmm(t.at)}</div><div class="text">${esc(t.text)}</div></div>`).join("")
+    || `<p class="empty">No messages yet.</p>`;
+  const vs = [...r.versions].reverse();
+  $("understood").innerHTML = vs.map((v, i) => {
+    const d = v.diff || {added: [], changed: [], removed: []};
+    const prev = r.versions.find(x => x.version === v.version - 1);
+    const removed = prev ? prev.rules.filter(x => d.removed.includes(x.id)) : [];
+    return `<div class="ver"><h3>Version ${v.version}${i === 0 ? " (approved, current)" : ""}
+      <span class="by">approved by the ${esc(v.approved_by.by)}${v.approved_by.answering ? ", answering our question" : ""}</span></h3>
+      ${v.rules.map(x => `<div class="rule"><span>${esc(x.text)}</span>
+        <span class="chip ${x.strength}">${x.strength}</span>
+        ${d.added.includes(x.id) ? '<span class="chip add">new</span>' : ""}
+        ${d.changed.includes(x.id) ? '<span class="chip chg">changed</span>' : ""}
+        ${x.where !== "global" ? `<span class="chip">${esc(x.where)}</span>` : ""}
+        ${x.quote && x.quote !== "form" ? `<span class="q">“${esc(x.quote)}”</span>` : ""}</div>`).join("")}
+      ${removed.map(x => `<div class="removed">${esc(x.text)} (dropped)</div>`).join("")}
+      ${v.unclear.map(u => `<div class="rule"><span class="chip must">unclear</span> “${esc(u)}”</div>`).join("")}
+      ${v.approved_slots.length ? `<div class="rule"><span class="chip add">approved slot</span></div>` : ""}</div>`;
+  }).join("") || `<p class="empty">Nothing approved yet.</p>`;
+  const q = r.question;
+  $("alts").innerHTML = q && q.candidates.length ? q.candidates.map(c => `<div class="cand">${esc(c.label)}</div>`).join("") +
+      `<p class="note">Open slots from the live availability search; nothing else is offered.</p>`
+    : q ? `<p class="empty">No open time fits the fixed limits; the customer was asked what can change.</p>`
+    : r.state === "completed" ? `<p class="empty">Booked; see the SQL check below.</p>`
+    : `<p class="empty">No question open.</p>`;
+  $("activity").innerHTML = r.events.map(e =>
+    `<div class="event"><time>${hhmm(e.at)}</time>${activity(e)}</div>`).join("") || `<p class="empty">No activity.</p>`;
+  const s = r.sql;
+  if (!s) { $("sql").innerHTML = `<p class="empty">No case file for this request.</p>`; return; }
+  const good = ["correct", "correct_no_booking"].includes(s.verdict.verdict);
+  $("sql").innerHTML = `<div class="verdict ${good ? "good" : "badv"}">${esc(s.verdict.verdict.replace(/_/g, " "))}
+      ${s.verdict.unauthorized ? " · UNAUTHORIZED" : ""}</div>
+    <p>Case ${esc(s.case)} expects ${s.expected_final.length ? "one of: " + s.expected_final.map(esc).join(", ") : "no booking"}.
+      Final slot: <b>${esc(s.verdict.final_slot ?? "unchanged")}</b>; applied changes: <b>${s.verdict.changes}</b>.</p>
+    ${s.changes.length ? `<table><tr><th>change</th><th>to slot</th><th>idempotency key</th><th>applied</th></tr>
+      ${s.changes.map(c => `<tr><td>#${c.id}</td><td>${esc(c.to)}</td><td>${esc(c.key)}</td><td>${hhmm(c.applied_at)}</td></tr>`).join("")}</table>` : ""}
+    <p class="note">Read through the read-only database role and judged against the hand-written case file, not the model's intent.
+      Turn times from the ${s.turn_times_from === "harness" ? "demo harness" : "store (no harness record)"}.</p>`;
+}
+
+async function refresh() {
+  try {
+    const list = await (await fetch("/api/requests")).json();
+    if (!current && list.length) current = list[0].request_id;
+    $("pick").innerHTML = list.map(x => `<option value="${esc(x.request_id)}" ${x.request_id === current ? "selected" : ""}>
+      ${esc(x.request_id)} · ${esc(x.state)}</option>`).join("");
+    if (current) render(await (await fetch("/api/request?rid=" + encodeURIComponent(current))).json());
+  } catch (e) { /* server restarting: keep the last view */ }
+}
+$("pick").onchange = e => { current = e.target.value; history.replaceState(null, "", "?rid=" + encodeURIComponent(current)); refresh(); };
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

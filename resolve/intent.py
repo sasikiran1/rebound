@@ -364,19 +364,28 @@ def _container(intent: dict, target: dict) -> list:
     raise PatchError("rule not found")
 
 
-def explain_rule(rule: dict, names: dict[int, str]) -> str:
+def explain_rule(rule: dict, names: dict[int, str], strength: bool = True) -> str:
     def day(s):
         d = dt.date.fromisoformat(s)
         return f"{d.strftime('%a %b')} {d.day}"
 
     def hhmm(s):
         return dt.datetime.strptime(s, "%H:%M").strftime("%I:%M %p").lstrip("0")
+    def days(ds):  # consecutive runs of three or more dates read as a range
+        ds = sorted(ds)
+        runs, start = [], 0
+        for i in range(1, len(ds) + 1):
+            if i == len(ds) or dt.date.fromisoformat(ds[i]) - dt.date.fromisoformat(ds[i - 1]) != dt.timedelta(1):
+                run = ds[start:i]
+                runs.append(f"{day(run[0])} to {day(run[-1])}" if len(run) > 2 else " or ".join(day(d) for d in run))
+                start = i
+        return " or ".join(runs)
     k = rule["kind"]
     who = ", ".join(names.get(t, str(t)) for t in rule.get("technician_ids", []))
     text = {
         "dates_between": lambda: f"between {day(rule['date_from'])} and {day(rule['date_to'])}",
-        "on_dates": lambda: "on " + " or ".join(day(d) for d in rule["dates"]),
-        "not_on_dates": lambda: "not on " + " or ".join(day(d) for d in rule["dates"]),
+        "on_dates": lambda: "on " + days(rule["dates"]),
+        "not_on_dates": lambda: "not on " + days(rule["dates"]),
         "on_weekdays": lambda: "on " + "/".join(w.title() for w in rule["weekdays"]),
         "not_on_weekdays": lambda: "not on " + "/".join(w.title() for w in rule["weekdays"]),
         "start_at_or_after": lambda: f"starting {hhmm(rule['time'])} or later",
@@ -385,8 +394,8 @@ def explain_rule(rule: dict, names: dict[int, str]) -> str:
         "technician_is_not": lambda: f"not with {who}",
     }[k]()
     if rule.get("only_on_dates"):
-        text += " (on " + " or ".join(day(d) for d in rule["only_on_dates"]) + ")"
-    return text + {"must": " [fixed]", "flexible": "", "prefer": " [if possible]"}[rule["strength"]]
+        text += " (on " + days(rule["only_on_dates"]) + ")"
+    return text + (" if possible" if rule["strength"] == "prefer" and strength else "")
 
 
 def explain(intent: dict, names: dict[int, str]) -> str:

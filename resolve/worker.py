@@ -130,6 +130,11 @@ class Worker:
                                    candidates=[c["slot_id"] for c in d.candidates])
             if d.kind != "book":
                 return await self._ask(req, d)
+            if req.get("confirm") and d.slot["slot_id"] not in intent.get("approved_slots", []):
+                d.kind, d.candidates = "confirm", [d.slot]
+                d.question = (f"I can move you to {describe(d.slot, names)}. Shall I book it? Your current "
+                              "appointment stays as it is until you say yes.")
+                return await self._ask(req, d)
             slot = d.slot
             if not await self.store.record_attempt(rid, self.owner, slot["slot_id"], key, "sending"):
                 return {"request_id": rid, "result": "lease_lost"}

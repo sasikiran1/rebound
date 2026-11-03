@@ -17,6 +17,11 @@ from resolve.interpret import Model, Outcome, build_facts, interpret, revise
 from resolve.store import TERMINAL, Store
 from resolve.worker import MAX_QUESTIONS
 
+# Never promise a booking before it exists: the customer keeps the current appointment until a change is confirmed.
+PENDING = ("Your current appointment stays as it is until a change is confirmed. I'll message you when it's booked, "
+           "or if I need to ask you something.")
+YES = {"yes", "yes please", "yes book it", "yes please book it", "yes, please book it", "book it", "please book it",
+       "ok", "okay", "sure", "confirm", "yes that works", "that works", "sounds good"}
 
 class Resolve:
     def __init__(self, store: Store, api: FieldDesk, model: Model | None, today: dt.date, horizon_days: int):
@@ -38,10 +43,10 @@ class Resolve:
                 await asyncio.sleep(2 ** n)
 
     async def open(self, request_id: str, customer_id: int, appointment_id: int, region: str, service: str,
-                   message: str, facts: dict | None = None) -> dict:
+                   message: str, facts: dict | None = None, confirm: bool = False) -> dict:
         facts = facts or await self.load_facts(customer_id, appointment_id)
         await self.store.create(request_id, customer_id, appointment_id, region, service, self.today,
-                                self.horizon_days, facts)
+                                self.horizon_days, facts, confirm)
         await self.store.add_turn(request_id, "customer", message, "message")
         return await self._interpret(request_id, facts)
 
@@ -54,8 +59,8 @@ class Resolve:
             v = await self.store.approve(rid, out.value, {"turn": turns[-1]["n"], "by": "customer",
                                                           "text": turns[-1]["text"]}, None)
             names = {t["technician_id"]: t["name"] for t in facts["technicians"]}
-            await self.store.add_turn(rid, "assistant", f"Understood: {I.explain(out.value, names)}. I'll book it "
-                                      "as soon as a matching time is confirmed.", "ack")
+            await self.store.add_turn(rid, "assistant", f"Understood: {I.explain(out.value, names)}. {PENDING}",
+                                      "ack")
             return {"state": "ready", "version": v}
         return await self._unusable(rid, out)
 
@@ -85,7 +90,13 @@ class Resolve:
         facts = req["facts"]
         names = {t["technician_id"]: t["name"] for t in facts["technicians"]}
         current = await self.store.intent(request_id, req["version"]) if req["version"] else {"rules": []}
-        out = await revise(self.model, facts, turns, current, req["question"], names)
+        question = req["question"] or {}
+        if question.get("kind") == "confirm" and I.normalize(text) in YES:  # plain yes: no model call needed
+            out = Outcome(I.apply_patch(current, {"ops": [{"op": "accept_proposal",
+                                                           "slot_id": question["candidates"][0]["slot_id"]}]},
+                                        question)[0], [], 0)
+        else:
+            out = await revise(self.model, facts, turns, current, req["question"], names)
         await self.store.event(request_id, "revise", attempts=out.attempts, problems=out.problems,
                                decision=out.decision, intent=out.value)
         if out.decision == "declined":
@@ -109,7 +120,11 @@ class Resolve:
                                                              "answering": (req["question"] or {}).get("kind")}, delta)
         if v is None:
             return {"state": (await self.store.get(request_id))["state"], "refused": "executing"}
-        await self.store.add_turn(request_id, "assistant", f"Updated: {I.explain(out.value, names)}.", "ack")
+        if question.get("kind") == "confirm" and delta["approved_slots"]:
+            await self.store.add_turn(request_id, "assistant", "Thanks, booking it now.", "ack")
+        else:
+            await self.store.add_turn(request_id, "assistant", f"Updated: {I.explain(out.value, names)}. {PENDING}",
+                                      "ack")
         return {"state": "ready", "version": v, "diff": delta}
 
     async def approve_structured(self, request_id: str, intent: dict, by: str, turn_text: str) -> int | None:

@@ -7,6 +7,8 @@ A request has one stable identity (`request_id`) and moves through explicit stat
   ready        an approved intent version waits for the worker
   claimed      the worker holds a lease and is executing the frozen version
   completed    the booking is confirmed (change_id recorded)
+With `confirm` set (product mode), the worker never books a slot the customer has not explicitly approved: it asks
+"shall I book <slot>?" first. The frozen evaluation runs with it off, as the cases were written.
   unresolved   nothing will be booked (declined, unsupported, or no progress)
 
 Every approved intent is a new row in `resolve.versions`; the request points at the version being executed. The
@@ -46,6 +48,7 @@ CREATE TABLE IF NOT EXISTS resolve.requests (
     created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at      timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+ALTER TABLE resolve.requests ADD COLUMN IF NOT EXISTS confirm boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS resolve.versions (
     request_id  text    NOT NULL REFERENCES resolve.requests (request_id),
     version     integer NOT NULL,
@@ -116,11 +119,11 @@ class Store:
                                 request_id, kind, j(data))
 
     async def create(self, request_id: str, customer_id: int, appointment_id: int, region: str, service: str,
-                     today, horizon_days: int, facts: dict) -> None:
+                     today, horizon_days: int, facts: dict, confirm: bool = False) -> None:
         await self.pool.execute(
             "INSERT INTO resolve.requests (request_id, customer_id, appointment_id, region, service, today, "
-            "horizon_days, state, facts) VALUES ($1, $2, $3, $4, $5, $6, $7, 'needs_input', $8::jsonb)",
-            request_id, customer_id, appointment_id, region, service, today, horizon_days, j(facts))
+            "horizon_days, state, facts, confirm) VALUES ($1, $2, $3, $4, $5, $6, $7, 'needs_input', $8::jsonb, $9)",
+            request_id, customer_id, appointment_id, region, service, today, horizon_days, j(facts), confirm)
 
     async def get(self, request_id: str) -> dict | None:
         return row_dict(await self.pool.fetchrow("SELECT * FROM resolve.requests WHERE request_id = $1", request_id))
