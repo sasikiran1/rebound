@@ -95,8 +95,9 @@ change, to the expected slot, authorized when applied.
 ## Spend
 
 Muse for Resolve: 69 calls, **$0.443** (dev $0.063, held-out resolve $0.234, held-out one-shot $0.132, demo $0.014),
-within the approved $2.55 / 141-call cap. Median call latency 4.4 s, 90th percentile 9.1 s. Cumulative project spend
-recorded: $50.51.
+within the approved $2.55 / 141-call cap. Median call latency 4.4 s, 90th percentile 9.1 s. The deployment check
+(`scripts/resolve_service_e2e.py`: intake over HTTP, worker container, confirm, SQL verdict `correct`) added 1 call,
+$0.006: **70 calls, $0.449** in all. Cumulative project spend recorded: $50.52.
 
 ## Limitations
 

@@ -2,6 +2,7 @@
 
 | Document | Purpose |
 |---|---|
+| [architecture.md](architecture.md), [decisions/](decisions/) | Resolve architecture: components, state ownership, lifecycle, failure handling, deployment, security; decision records |
 | [resolve_protocol.md](resolve_protocol.md), [resolve_results.md](resolve_results.md) | Resolve: evaluation rules, held-out results for Muse and the local model, recovery checks, demo, spend and limitations |
 | [protocol.md](protocol.md) | Frozen evaluation rules for eval-v1 |
 | [results.md](results.md) | Every measurement, in the order it was made |

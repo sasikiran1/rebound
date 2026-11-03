@@ -176,27 +176,49 @@ class Worker:
 
 
 async def _main() -> None:
-    """A separate worker process: `python -m resolve.worker --request ID [--crash-at after_send]`. Polls the request
-    until it leaves `ready` (completed, unresolved or needs_input). Prints one JSON line per pass."""
+    """A separate worker process.
+
+    `python -m resolve.worker --request ID [--crash-at after_send]` polls one request until it leaves `ready`
+    (completed, unresolved or needs_input); used by the demo and the recovery checks.
+    `python -m resolve.worker` (no --request) is the long-running service: it claims any ready request, or one whose
+    lease expired, until SIGTERM/SIGINT, then finishes the request in hand and exits. Prints one JSON line per pass."""
     import argparse
     import json
+    import signal
 
     from harness import settings
     ap = argparse.ArgumentParser()
-    ap.add_argument("--request", required=True)
+    ap.add_argument("--request", default=None)
     ap.add_argument("--owner", default=f"worker-{os.getpid()}")
     ap.add_argument("--crash-at", choices=CRASH_POINTS)
     ap.add_argument("--lease-s", type=float, default=8.0)
     ap.add_argument("--poll-s", type=float, default=1.0)
-    ap.add_argument("--max-s", type=float, default=120.0)
+    ap.add_argument("--max-s", type=float, default=None, help="stop after this long (default: 120 s with --request)")
     a = ap.parse_args()
     store = await Store(settings.admin_dsn(settings.TRIAL_DB)).open()
     api = FieldDesk(settings.FIELDDESK_URL, actor="resolve-worker")
     worker = Worker(store, api, owner=a.owner, lease_s=a.lease_s, crash_at=a.crash_at)
     loop = asyncio.get_running_loop()
-    end = loop.time() + a.max_s
+    stop = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    max_s = a.max_s if a.max_s is not None else (120.0 if a.request else None)
+    end = loop.time() + max_s if max_s else None
     try:
-        while loop.time() < end:
+        if a.request is None:  # service mode
+            print(json.dumps({"owner": a.owner, "mode": "service", "started": True}), flush=True)
+            while not stop.is_set() and (end is None or loop.time() < end):
+                res = await worker.run_once()
+                if res is not None:
+                    print(json.dumps({"owner": a.owner, **res}, default=str), flush=True)
+                    continue  # more work may be waiting
+                try:
+                    await asyncio.wait_for(stop.wait(), a.poll_s)
+                except TimeoutError:
+                    pass
+            print(json.dumps({"owner": a.owner, "mode": "service", "stopped": True}), flush=True)
+            return
+        while end is None or loop.time() < end:
             req = await store.get(a.request)
             if req is None or req["state"] in ("completed", "unresolved", "needs_input"):
                 print(json.dumps({"request_id": a.request, "state": req and req["state"], "owner": a.owner}),

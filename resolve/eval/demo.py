@@ -36,7 +36,7 @@ from resolve import intent as I
 from resolve.api import FieldDesk
 from resolve.eval import cases as C
 from resolve.eval.oracle import verdict
-from resolve.eval.run import make_model
+from resolve.models import make_model
 from resolve.service import Resolve
 from resolve.store import Store
 
