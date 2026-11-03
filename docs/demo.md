@@ -22,3 +22,20 @@ reads it back over CalDAV.
 
 If the live run stalls, say so and switch to the recorded run `runs/resolve/demo/demo-muse-1`. Never present recorded
 data as live.
+
+## Live console (you type as the customer)
+
+`scripts/resolve_live.sh --case H15 --model muse-spark-1.3` (Thunderbird subscribed to the technicians' calendars
+beside it; click sync after each booking). Commands: `/naive`, `/resolve` (each re-seeds the same world),
+`/outage on|off`, `/take`, `/script`, `/status`, `/quit`; anything else is a customer message.
+
+1. `/naive`, then type "Keep the same time of day as my current booking, just move it to Friday." The naive agent
+   (same model, one shot, no questions) books at once; the calendar and the SQL check show what it did.
+2. `/resolve`, the same message. Resolve proposes a slot and asks before writing. If the slot is wrong, say so
+   ("No, keep 10:30 like my current booking. Any technician is fine."); it changes only that and proposes again.
+3. `/outage on`, then "Yes, please book it.": the worker cannot reach FieldDesk and waits. `/outage off`: it books.
+
+Rehearsal on Muse, Nov 3 (4 calls, $0.034): the naive agent read "before 12:00" and booked Fri 09:00 with Mila in
+2 of 2 runs (SQL check: unauthorized); Resolve made the same first reading, proposed Fri 09:00, took the correction,
+proposed Fri 10:30 with Ken, waited through the outage and booked it (correct). The model may read it right on
+camera; if so, say so. The SQL check grades against the case file, so type what the case's customer means.

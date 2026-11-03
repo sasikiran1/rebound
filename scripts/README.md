@@ -17,6 +17,7 @@ Run these from the repository root. Frozen records cite several of these paths, 
 | `build_ui.py` | Generate `ui/index.html` from recorded bundles |
 | `resolve_eval_local.sh`, `resolve_muse.sh` | Resolve held-out evaluation on the local model (all three arms), or on Muse one part at a time under a hard cap |
 | `resolve_demo_muse.sh` | Resolve demonstration on Muse (at most 6 calls / $0.25) |
+| `resolve_live.sh` | Live console: type as the customer; naive one-shot agent vs Resolve on the same world, outage switch |
 | `resolve_service_e2e.py` | Check the deployed Resolve containers over HTTP: intake, worker, confirm, SQL verdict |
 | `resolve_inspect.py` | Print a Resolve run's intents, validator problems, decisions and questions per case |
 | `local_models/` | Local-model study: campaign runner and specs, smoke test, semantic cases, raw replay, tool-schema generator. Live runs use `ollama_relay_win.py`, which `harness/ollama.py` starts with the Windows Python |
