@@ -87,7 +87,7 @@ check: lint test no-sleep
 # API (needs MODEL_API_KEY; paid, capped by the scripts in scripts/resolve_*.sh). resolve-faults and resolve-form need
 # no model at all.
 resolve-ui:
-	uv run uvicorn resolve.ui:app --host 127.0.0.1 --port 8090
+	uv run uvicorn resolve.app:app --host 127.0.0.1 --port 8090
 
 resolve-demo:
 	uv run python -m resolve.eval.demo $(if $(MODEL),--model $(MODEL))

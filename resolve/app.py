@@ -1,6 +1,6 @@
 """The Resolve service: the screen, read APIs over the store and the SQL oracle, and the customer-facing intake.
 
-    uv run uvicorn resolve.ui:app --port 8090        then open http://127.0.0.1:8090/
+    uv run uvicorn resolve.app:app --port 8090        then open http://127.0.0.1:8090/
 
 Screen and reads: the conversation, what was understood (each approved version, its diff and who approved it), the
 real alternatives behind an open question, the request state and the oracle's verdict computed from SQL (shown for

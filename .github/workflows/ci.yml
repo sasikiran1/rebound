@@ -17,7 +17,7 @@ jobs:
       - name: pytest
         run: uv run pytest -q
       - name: resolve modules import (product, service, evaluation)
-        run: uv run python -c "import resolve.ui, resolve.worker, resolve.models, resolve.eval.run, resolve.eval.faults, resolve.eval.demo"
+        run: uv run python -c "import resolve.app, resolve.worker, resolve.models, resolve.eval.run, resolve.eval.faults, resolve.eval.demo"
       - name: compose file is valid, including the resolve profile
         run: docker compose -f docker/compose.yml --profile resolve config -q
       - name: no artificial delays in backend/

@@ -113,7 +113,7 @@ services:
       RESOLVE_MAX_CALLS: ${RESOLVE_MAX_CALLS:-50}
       RESOLVE_MAX_COST: ${RESOLVE_MAX_COST:-1.00}
       RESOLVE_CONFIRM: ${RESOLVE_CONFIRM:-true}
-    command: ["uvicorn", "resolve.ui:app", "--host", "0.0.0.0", "--port", "8090", "--no-access-log"]
+    command: ["uvicorn", "resolve.app:app", "--host", "0.0.0.0", "--port", "8090", "--no-access-log"]
     ports:
       - "127.0.0.1:8091:8090"  # no authentication: localhost only
     depends_on:

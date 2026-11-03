@@ -12,7 +12,7 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
                             |
             +---------------v----------------+        Meta Model API (Muse Spark)
             |  resolve-service (FastAPI)     |------> or local Ollama (development)
-            |  resolve/ui.py                 |        model proposes an intent / a patch
+            |  resolve/app.py                 |        model proposes an intent / a patch
             |   intake: service.py           |
             |   interpret.py -> intent.py    |  validate against the customer's words
             |   screen + read APIs           |  and SQL-backed facts; never trusted as-is
@@ -50,7 +50,7 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | `resolve/worker.py` | Claims, reconciles, searches, decides, records the attempt, writes; crash points for tests | no model involved |
 | `resolve/api.py` | FieldDesk client: one attempt per call, 3 s deadline, paging, call log | n/a |
 | `resolve/models.py` | Meta API or Ollama behind one `Model` with call and spend caps | n/a |
-| `resolve/ui.py` | Screen, read APIs, health, metrics, intake | n/a |
+| `resolve/app.py` | Screen, read APIs, health, metrics, intake | n/a |
 | `resolve/eval/` | Cases and seeding, runner arms, SQL oracle, recovery checks, scripted demo | judges the product |
 
 ## State ownership
@@ -99,7 +99,7 @@ image (`docker/resolve.Dockerfile`, non-root user):
 
 - `resolve-worker`: `python -m resolve.worker` in service mode; claims any ready request; on SIGTERM finishes the
   request in hand and exits 0.
-- `resolve-service`: `uvicorn resolve.ui:app`, published on `127.0.0.1:8091`; `/healthz` checks the store and
+- `resolve-service`: `uvicorn resolve.app:app`, published on `127.0.0.1:8091`; `/healthz` checks the store and
   FieldDesk.
 
 Configuration (environment): `REBOUND_PG_HOST/PORT`, `FIELDDESK_DB`, `REBOUND_FIELDDESK_URL`, `MODEL_API_KEY`,

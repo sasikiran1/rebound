@@ -5,7 +5,7 @@ is live on Muse (2 model calls, about $0.02, capped by the script); everything e
 narration says so. Burn in a caption on every segment, because judges may watch muted: "synthetic data, scripted
 customer".
 
-Before recording: `make sut-up`; start the screen with `uv run uvicorn resolve.ui:app --port 8090`; open
+Before recording: `make sut-up`; start the screen with `uv run uvicorn resolve.app:app --port 8090`; open
 `docs/resolve_results.md` and `ui/index.html` in tabs.
 
 | Time | Segment | On screen | Words |
