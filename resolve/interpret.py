@@ -177,10 +177,13 @@ async def interpret(model: Model, facts: dict, turns: list[dict], repair: bool =
             problems = ["no record_intent call" + (f"; replied with text: {text[:200]}" if text else "")]
         else:
             draft = copy.deepcopy(args)
-            draft.setdefault("rules", [])  # structural only: an intent may consist of unclear readings alone
-            draft = I.assign_ids(draft)
-            draft.pop("approved_slots", None)
-            problems = I.validate(draft, facts, said)
+            if isinstance(draft, dict):
+                draft.setdefault("rules", [])  # structural only: an intent may consist of unclear readings alone
+                draft.pop("approved_slots", None)
+            problems = I.validate(draft, facts, said)  # schema first: malformed output must not reach assign_ids
+            if not problems:
+                draft = I.assign_ids(draft)
+                problems = I.validate(draft, facts, said)
             if not problems:
                 return Outcome(draft, [], attempt)
             if _horizon_only(problems):  # not repairable: the date the customer asked for cannot be booked

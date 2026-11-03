@@ -27,10 +27,13 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 | Admission gate, recovery after a 10 s fault | 20–22 s to 10 s (the metric's floor) |
 | Original thesis, "agents delay recovery" | **not supported**: agents were under 2% of in-flight time |
 | Resolve, 24 frozen held-out conversations, Muse | **23/24 correct, 1 unauthorized booking**, $0.23 |
+| Same, customer confirms the exact slot first | **23/24, 0 unauthorized** |
+| Hand-written rule parser, frozen before held-out | 20/24, 2 unauthorized |
 | Same model, one-shot extraction | 15/24, 2 unauthorized |
 | Form with perfect entries, same execution path | 24/24 |
-| Recovery checks on the live stack | 9/9 |
-| Total model spend for Resolve | $0.45 (70 calls) |
+| Llama 3.1 8B in the same pipeline | 10/24, 2 unauthorized |
+| Recovery checks on the live stack | 11/11 |
+| Total model spend for Resolve | $0.70 (106 calls) |
 
 ## Decisions that mattered
 
@@ -47,10 +50,12 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 
 - The study's headline thesis failed at our traffic mix; reported as a null result.
 - Resolve's one unauthorized booking quoted the customer's real words with the wrong meaning; validation cannot catch
-  that, which is why the product confirms before booking (demonstrated, not yet evaluated on held-out cases).
-- Llama 3.1 8B via Ollama: 0/24 on a related task, cause not isolated.
-- Next: a frozen rule-parser baseline (does the model beat hand-written rules?), customer messages written by
-  someone other than me, a notification channel, and real scheduling data on how often requests arrive as free text.
+  that. Confirming the exact slot first removed it on the held-out set (with a simulated customer who always reads).
+- A careful rule parser came within 3 cases of the model on conversations I wrote. The model's edge is robustness
+  to phrasing; proving that needs messages written by someone else.
+- Llama 3.1 8B: 0/24 through raw tool use in the study, 10/24 inside the validated pipeline.
+- Next: customer messages written by other people, a real calendar and email provider instead of local stand-ins,
+  and real scheduling data on how often requests arrive as free text.
 
 Code, evidence and every number: <https://github.com/sasikiran1/rebound>
 ([architecture](architecture.md), [Resolve results](resolve_results.md), [study results](results.md)).

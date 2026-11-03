@@ -15,10 +15,15 @@ Run records: `runs/resolve/` (not in git).
 | form (correct entries by construction) | none | 24 | 0 | 0 | 22 of 23 | 0 | $0 |
 | resolve | qwen3-14b, local | 16 | 2 (H17, H22) | 6 | 19 of 23 | 47 | $0 |
 | one-shot | qwen3-14b, local | 10 | 0 | 14 | (cannot ask) | 24 | $0 |
+| **rule parser** (no model, frozen in `ec32419`) | none | **20** | **2** (H10, H11) | 2 | 20 of 23 | 0 | $0 |
+| resolve | Llama 3.1 8B, local | 10 | 2 (H08, H09) | 12 | 15 of 23 | 55 | $0 |
+| **resolve + confirm** (product mode) | Muse Spark 1.3 | **23** | **0** | 1 (H15) | (one more per booking) | 35 | $0.246 |
+| rule parser + confirm | none | 20 | 0 | 4 | (one more per booking) | 0 | $0 |
 
 "Correct" counts both correct bookings and correct refusals to book (4 cases must end with no booking).
 The gate set before the run was at least 22/24 and zero unauthorized bookings: **Muse resolve meets the first part (23/24) and
-misses the second (1 unauthorized).** Locally neither part is met.
+misses the second (1 unauthorized). With confirm mode, Muse meets both (23/24, 0 unauthorized).** Locally neither part
+is met. Every row is a single run; the last four rows were added later the same day (below).
 
 ### By category (Muse)
 
@@ -63,6 +68,63 @@ call already does as well.
    the 24 conversations; the form needed 160 values set (kinds, dates, times, technicians, strengths, scopes).
    Whether 401 words of natural text are less work than 160 form values for real customers is not measured here.
 
+## Does the model beat hand-written rules?
+
+`resolve/eval/rules.py` is a deterministic interpreter: patterns for weekdays and ordinal dates, "this/next week",
+parts of the day, "after/before/between" times, negation, "if not / otherwise" fallbacks, technician names (shared
+first names become `unclear`) and history references ("same technician as last time", "whoever did my boiler
+service in October"); a later message replaces the kinds of rules it mentions. It plugs into the same service,
+validator, evaluator, worker and oracle. It was developed on the dev cases only (4/6, 5/6, 6/6 over three iterations,
+`runs/resolve/rules-dev-r1..3`), frozen in commit `ec32419`, and run once on held-out. Its author had read the
+held-out conversations, which can only favor it.
+
+| Category | Muse resolve | rule parser |
+|---|---|---|
+| straightforward (4) | 4 | 4 |
+| conditional alternatives (4) | 4 | 4 |
+| negation (3) | 3 | 1 (2 unauthorized) |
+| references to history (4) | 3 (1 unauthorized) | 4 |
+| corrections (3) | 3 | 2 |
+| renewed permission (3) | 3 | 2 |
+| must stay unresolved (3) | 3 | 3 |
+| **total** | **23, 1 unauthorized** | **20, 2 unauthorized** |
+
+The model wins by 3 cases, not by a landslide, and the two fail differently:
+
+- **Rules break on wording.** H10 "Anyone but Victor": the clause split on "but" lost the negation and Victor was
+  booked. H11 "afternoons only": the plural did not match "afternoon" and 10:00 was booked. H16 "I meant Thursday
+  morning. The afternoon is when I pick up my kids": two parts of the day contradict. H21 "Wednesday with Dana works
+  too": resolved to this Wednesday, not the one after Tuesday the 17th.
+- **The model breaks on meaning.** H15 "same time of day as my current booking" became "morning"; the rules, which
+  read the current start time literally, got it right.
+
+Honest reading: on these 24 cases a careful rule parser gets most of the way for free. The model's advantage is
+robustness to phrasing (negation scope, plurals, relative dates, self-corrections), which matters more as real
+customers write things no rule anticipated; this set is too small and too familiar to its author to measure that.
+
+## Confirm mode on the held-out set
+
+Product mode (`--confirm`): before any write the worker asks "I can move you to <slot>. Shall I book it?". The
+simulated customer answers yes only if that slot is one the case file says they authorized, otherwise "No, that time
+doesn't work for me." Every other question gets the usual scripted reply. Same frozen interpreters.
+
+- Muse + confirm: 23/24 correct, **0 unauthorized**; H15 becomes a refused proposal (no booking) instead of a wrong
+  booking. 35 calls, $0.246.
+- Rule parser + confirm: 20/24, **0 unauthorized**; H10 and H11 become refusals.
+
+So the customer's yes removes every unauthorized booking in both arms, at the cost of one more turn per booking. The
+simulated customer checks every proposal against its own truth; real customers may say yes without reading, so this
+measures the mechanism, not real-world vigilance.
+
+## Llama 3.1 8B with the same validator
+
+The study's Llama result (0 of 24 goal-preservation tasks through raw tool use) left open whether the model or the
+setup failed. Inside Resolve, where the model only proposes a validated intent: 10/24, 2 unauthorized (H08, H09),
+12 missed bookings, 55 calls, local. The first attempt crashed the run: Llama returned rules as strings, and ids were
+assigned before the schema check (`runs/resolve/heldout-llama31/resolve.crashed-before-schema-fix.log`); malformed
+output is now a validator problem with a repair turn. Llama 3.1 8B is weaker than Muse here, but not useless once code
+holds it to a schema: most of its failures are refusals to book, not wrong bookings.
+
 ## Development record (dev cases, not held out)
 
 | Run | Model / prompt | Correct | Unauthorized |
@@ -72,9 +134,15 @@ call already does as well.
 | dev-r4 | qwen2.5-14b / gemma4-12b, v2 | 2/6 / 3/6 | 2 / 1 |
 | muse-dev | Muse Spark 1.3, v2 | 6/6 | 0 |
 
-## Recovery checks (live stack, `runs/resolve/faults/faults-r3`)
+## Recovery checks (live stack, `runs/resolve/faults/faults-r5`)
 
-9 of 9 pass: an eligible slot at row 61 of 61 (first page 50) is found and booked; seven invalid-intent kinds are
+**11 of 11 pass.** Runs 4 and 5 add two checks (run 4 failed the new notification check on a test bug: it counted
+other checks' emails to the same fixture customer; it now matches messages by Message-ID). **Notifications:** the confirmation question and the outcome reach the
+customer by SMTP; while the mail server refuses (421), the message stays queued with its error and is delivered on
+the next attempt. **Fault shapes beyond latency:** the database link reset in the middle of the write (FieldDesk
+answers 500; the worker keeps the attempt as uncertain, reconciles when the link is back, and the write commits
+exactly once because the reset aborted the first transaction) and the link going silent during the search (timeout,
+retry later, booked once). Earlier runs: an eligible slot at row 61 of 61 (first page 50) is found and booked; seven invalid-intent kinds are
 rejected with no booking; a worker killed after claim, after recording its attempt, or after the POST returned leads
 to exactly one change; a real lost acknowledgment (database link slowed during the write, worker timed out, commit
 landed) reconciles with `replayed: true`; an approved slot taken before execution leads to a new question, not a
@@ -97,16 +165,20 @@ change, to the expected slot, authorized when applied.
 Muse for Resolve: 69 calls, **$0.443** (dev $0.063, held-out resolve $0.234, held-out one-shot $0.132, demo $0.014),
 within the approved $2.55 / 141-call cap. Median call latency 4.4 s, 90th percentile 9.1 s. The deployment check
 (`scripts/resolve_service_e2e.py`: intake over HTTP, worker container, confirm, SQL verdict `correct`) added 1 call,
-$0.006: **70 calls, $0.449** in all. Cumulative project spend recorded: $50.52.
+$0.006: 70 calls, $0.449. The confirm-mode held-out run (approved cap $0.50 / 60 calls) used 35 calls, $0.246, and the
+deployed check with notifications 1 call, $0.003: **106 calls, $0.698** for Resolve in all. Cumulative project spend
+recorded: $50.77. The rule parser and Llama runs are free.
 
 ## Limitations
 
 - Synthetic fixtures and scripted replies written by hand; I also wrote the expected outcomes and the form
   entries. No customer study; the effort comparison is exploratory.
 - 24 held-out cases: one run per arm and model. No confidence intervals are claimed.
-- No rule-parser baseline was built; whether a hand-written parser matches the model on these cases is untested.
-- No notification channel: questions and confirmations are stored, not sent. A customer who left would not see them.
+- The rule-parser comparison is one frozen run by an author who knew the cases; it shows the margin on this set,
+  not how either would fare on wording neither has seen.
+- Notifications go over SMTP to a local test inbox (`resolve/eval/mailsink.py`), not to a real provider or phone;
+  recipients are synthetic (`customer-<id>@example.test`). Replies by email are not read back.
 - The worker guarantee is the tested one (one worker per request, the injected crash points, FieldDesk's
   idempotency key), not general exactly-once execution.
-- Interpretation errors that quote real words but change their meaning (H15) pass the validator; confirm mode is the
-  intended guard and was demonstrated, not evaluated on the held-out set.
+- Interpretation errors that quote real words but change their meaning (H15) pass the validator; confirm mode stops
+  them only if the customer reads the proposal, which the simulated customer always does.

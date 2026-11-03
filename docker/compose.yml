@@ -89,6 +89,8 @@ services:
       dockerfile: docker/resolve.Dockerfile
     image: rebound-resolve
     environment: &resolve-env
+      RESOLVE_SMTP_HOST: ${RESOLVE_SMTP_HOST:-resolve-mail}
+      RESOLVE_SMTP_PORT: ${RESOLVE_SMTP_PORT:-1025}
       REBOUND_PG_HOST: postgres
       REBOUND_PG_PORT: "5432"
       REBOUND_FIELDDESK_URL: http://fielddesk:8080
@@ -96,12 +98,23 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD:-oracle}
     command: ["python", "-m", "resolve.worker", "--owner", "worker-compose"]
+    # Questions and outcomes go out by SMTP. Locally to the test inbox below; a real provider is a change of
+    # RESOLVE_SMTP_HOST / PORT / USER / PASSWORD.
     stop_grace_period: 15s  # SIGTERM: finish the request in hand, then exit
     depends_on:
       postgres:
         condition: service_healthy
       fielddesk:
         condition: service_healthy
+
+  # Local test inbox: receives every customer message over SMTP and stores it (var/mail/inbox.jsonl); relays nothing.
+  resolve-mail:
+    profiles: ["resolve"]
+    image: rebound-resolve
+    command: ["python", "-m", "resolve.eval.mailsink", "--port", "1025", "--inbox", "/mail/inbox.jsonl"]
+    user: "0"  # writes to the bind-mounted var/mail
+    volumes:
+      - ../var/mail:/mail
 
   resolve-service:
     profiles: ["resolve"]
