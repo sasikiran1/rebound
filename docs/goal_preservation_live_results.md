@@ -4,6 +4,7 @@ Recorded November 2, 2026. All 48 planned batches and 96 model-backed sessions w
 explicit constraints and arrival orders were constructed. Model decisions were generated live using installed
 Ollama models, with real persisted SQLite writes. No paid inference, downloads, fake model responses or injected
 faults were used. Test doubles were used only in separate runner unit tests, never in this evaluation cohort.
+Per-batch numbers: [goal_preservation_live_comparison.csv](goal_preservation_live_comparison.csv).
 
 ## Outcome
 

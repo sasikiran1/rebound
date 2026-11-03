@@ -1,6 +1,6 @@
 # Resolve cases
 
-Synthetic fixtures with scripted customer turns, written by the builder. `dev.yaml` is for prompt development;
+Synthetic fixtures with scripted customer turns, written by hand. `dev.yaml` is for prompt development;
 `heldout.yaml` was committed before any model saw it and is not used for tuning. `faults.yaml` drives the recovery
 checks.
 

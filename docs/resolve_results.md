@@ -3,7 +3,7 @@
 Protocol: [resolve_protocol.md](resolve_protocol.md). Held-out cases frozen in `d63d0dd` before any model saw them;
 prompts `resolve_interpret_v2.md` / `resolve_revise_v2.md` and decision code frozen at `46d4250` for every held-out
 run below (later commits change display text and add an opt-in confirm mode that these runs do not use). Synthetic
-fixtures, scripted customer turns, builder-written cases. 24 cases is a prototype check, not a reliability estimate.
+fixtures, scripted customer turns, hand-written cases. 24 cases is a prototype check, not a reliability estimate.
 Run records: `runs/resolve/` (not in git).
 
 ## Held-out outcomes (24 conversations, judged in SQL)
@@ -17,7 +17,7 @@ Run records: `runs/resolve/` (not in git).
 | one-shot | qwen3-14b, local | 10 | 0 | 14 | (cannot ask) | 24 | $0 |
 
 "Correct" counts both correct bookings and correct refusals to book (4 cases must end with no booking).
-The owner's gate was at least 22/24 and zero unauthorized bookings: **Muse resolve meets the first part (23/24) and
+The gate set before the run was at least 22/24 and zero unauthorized bookings: **Muse resolve meets the first part (23/24) and
 misses the second (1 unauthorized).** Locally neither part is met.
 
 ### By category (Muse)
@@ -59,7 +59,7 @@ call already does as well.
    shared execution path (evaluator, store, worker) made no errors when the intent was right.
 2. **Did conversational interpretation help?** Against one-shot extraction with the same model, yes: +8 cases, and
    the gain is in references, corrections and renewed permission. Against a capable form filled in correctly, no:
-   the form is at least as correct. Effort is exploratory and builder-measured: the customer typed 401 words over
+   the form is at least as correct. Effort is exploratory and measured on my own cases: the customer typed 401 words over
    the 24 conversations; the form needed 160 values set (kinds, dates, times, technicians, strengths, scopes).
    Whether 401 words of natural text are less work than 160 form values for real customers is not measured here.
 
@@ -67,7 +67,7 @@ call already does as well.
 
 | Run | Model / prompt | Correct | Unauthorized |
 |---|---|---|---|
-| dev-r1 | qwen3-14b, v1 | 1/6 | 3 |
+| dev-r1 | qwen3-14b, [v1](../prompts/resolve_interpret_v1.md) | 1/6 | 3 |
 | dev-r2, dev-r3 | qwen3-14b, v2 (one corrective iteration, structural) | 4/6 | 0 |
 | dev-r4 | qwen2.5-14b / gemma4-12b, v2 | 2/6 / 3/6 | 2 / 1 |
 | muse-dev | Muse Spark 1.3, v2 | 6/6 | 0 |
@@ -101,7 +101,7 @@ $0.006: **70 calls, $0.449** in all. Cumulative project spend recorded: $50.52.
 
 ## Limitations
 
-- Synthetic fixtures and scripted replies written by the builder, who also wrote the expected outcomes and the form
+- Synthetic fixtures and scripted replies written by hand; I also wrote the expected outcomes and the form
   entries. No customer study; the effort comparison is exploratory.
 - 24 held-out cases: one run per arm and model. No confidence intervals are claimed.
 - No rule-parser baseline was built; whether a hand-written parser matches the model on these cases is untested.

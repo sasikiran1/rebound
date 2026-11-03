@@ -90,7 +90,6 @@ class GoalState:
     requirement_blocks: int = 0
     waits: int = 0  # wait tool (policy probe tool set); not counted in tool_calls
     wait_s: float = 0.0
-    intent_id: int | None = None  # store_intent: the outbox row this goal was handed off to
 
 
 def requirement_problem(requirements: dict | None, slot: dict | None) -> str | None:
@@ -186,10 +185,8 @@ def build_request(name: str, args: dict, scope: GoalScope) -> tuple[str, str, st
 class ToolAdapter:
     def __init__(self, base_url: str, client: httpx.AsyncClient, tools: list[dict], events: EventLog,
                  timeout_s: float = 3.0, max_result_bytes: int = 4096, allowed_hosts: tuple[str, ...] = (),
-                 sleep=asyncio.sleep, retry_after_guard: bool = False, retry_after_guard_cap_s: float = 10.0,
-                 outbox=None):
+                 sleep=asyncio.sleep, retry_after_guard: bool = False, retry_after_guard_cap_s: float = 10.0):
         self.base_url = base_url.rstrip("/")
-        self.outbox = outbox  # harness.outbox.Outbox, for the store_intent tool; None: the tool is refused
         self.allowed_hosts = allowed_hosts or (httpx.URL(self.base_url).host,)
         self.client = client
         self.schemas = {t["name"]: t["parameters"] for t in tools}
@@ -274,21 +271,6 @@ class ToolAdapter:
             await self.sleep(seconds)
             self.events.emit("tool.op", **ids, status="waited", latency_ms=round(seconds * 1000, 1), attempts=0)
             return {"waited_s": seconds}
-
-        if name == "store_intent":  # durable outbox: the goal is handed off, completed later by harness/outbox.py
-            if self.outbox is None:
-                state.invalid_arguments += 1
-                self.events.emit("tool.op", **ids, status="invalid_arguments", latency_ms=0.0, attempts=0)
-                return error("invalid_arguments", "store_intent is not available in this configuration")
-            intent_id = await self.outbox.put(scope, args)
-            if intent_id is None:  # this goal's intent was already completed by the worker; never overwritten
-                self.events.emit("tool.op", **ids, status="intent_closed", latency_ms=0.0, attempts=0)
-                return error("intent_closed", "this request was already handed off and completed")
-            state.intent_id = intent_id
-            self.events.emit("tool.op", **ids, status="intent_stored", latency_ms=0.0, attempts=0,
-                             intent_id=intent_id, intent=args)
-            return {"stored": True, "intent_id": intent_id,
-                    "note": "The request will be completed automatically when the system recovers."}
 
         if name == "record_requirements":
             state.requirements = args

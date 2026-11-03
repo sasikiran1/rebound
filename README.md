@@ -21,7 +21,7 @@ An agent says "Done!", the API returns 200 OK, and the booking is wrong: Muse Sp
 | Capable form with correct entries (same execution path) | 24/24: when the intent is right, the deterministic path makes no errors |
 | Recovery checks on the live stack | 9/9: paging past 50 results, 7 invalid-intent kinds, crashes at 3 points, a real lost acknowledgment, renewed permission, correction preserved, confirm-before-booking |
 
-The owner's bar for Resolve was at least 22/24 and zero unauthorized bookings: the first part is met, the second is not (one case, H15, "same time of day as my current booking", was read as "morning"). Details: [`docs/resolve_results.md`](docs/resolve_results.md).
+The pass mark I set for Resolve before the run was at least 22/24 and zero unauthorized bookings: the first part is met, the second is not (one case, H15, "same time of day as my current booking", was read as "morning"). Details: [`docs/resolve_results.md`](docs/resolve_results.md).
 
 ## Resolve
 

@@ -41,7 +41,7 @@ class AgentConfig:
 class GoalOutcome:
     goal_id: str
     task_id: str
-    end_reason: str  # rescheduled | deferred | handed_off | gave_up | limit_reached | provider_failed
+    end_reason: str  # rescheduled | deferred | gave_up | limit_reached | provider_failed
     limit: str | None = None
     model_calls: int = 0
     tool_calls: int = 0
@@ -236,9 +236,6 @@ async def run_goal(task: dict, goal_n: int, trial_id: str, provider: Provider, a
             if state.deferred_reason is not None:
                 out.end_reason = "deferred"
                 return
-            if state.intent_id is not None:  # store_intent: the outbox worker finishes this goal after recovery
-                out.end_reason = "handed_off"
-                return
 
     try:
         async with asyncio.timeout(cfg.goal_deadline_s):
@@ -263,6 +260,6 @@ def finish(out, state: GoalState, t_start: float) -> None:
     out.duration_s = round(time.monotonic() - t_start, 3)
     out.gate_rejections = state.gate_rejections
     out.attempts = state.attempts
-    if (out.change_id is None and out.end_reason not in ("deferred", "handed_off", "provider_failed")
+    if (out.change_id is None and out.end_reason not in ("deferred", "provider_failed")
             and state.gate_rejections > 0 and state.non_rejected_attempts == 0):
         out.end_reason = "rejected"
