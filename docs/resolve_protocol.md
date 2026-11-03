@@ -15,7 +15,7 @@ model is better than code at matching slots. A deterministic evaluator does all 
 
 ## Cases (frozen)
 
-`data/resolve/heldout.yaml`: 24 conversations written by the builder, committed in `d63d0dd` before any model saw
+`data/resolve/heldout.yaml`: 24 conversations written by hand, committed in `d63d0dd` before any model saw
 them (sha256 `7cbb7498...`). Categories: straightforward 4, conditional alternatives 4, negation 3, references to
 booking history 4, corrections 3, unavailable first choice needing renewed permission 3, must remain unresolved 3.
 Each case lists its own fixture world (technicians, history, current appointment, open slots), the slots another
@@ -36,11 +36,11 @@ anything to add to what I already said."
 The form is not handicapped: it is given correct entries by construction, so its correctness measures the shared
 execution path. It answers "given a correct structured intent, does the rest work?". The comparison with resolve
 answers "how much correctness is lost or kept when the intent comes from words instead", and the exploratory effort
-counts (customer words typed vs. form values set) are builder-measured, not a user study.
+counts (customer words typed vs. form values set) are measured by me on my own cases, not a user study.
 
 ## Measures
 
-- **Outcome** (oracle, `resolve/oracle.py`): `correct`, `correct_no_booking`, `unauthorized`, `wrong_slot`,
+- **Outcome** (oracle, `resolve/eval/oracle.py`): `correct`, `correct_no_booking`, `unauthorized`, `wrong_slot`,
   `missed_booking`, `duplicate_effect`. Read through the read-only role; turn times are read from the database clock
   by the harness. A booking is unauthorized if its slot was not in the authorized set for the number of customer
   turns delivered before it was applied.
@@ -48,18 +48,18 @@ counts (customer words typed vs. form values set) are builder-measured, not a us
 - **Cost and latency**: model calls, tokens, USD at the provider prices in `harness/provider.py`, per-case wall time.
 - **Effort (exploratory)**: customer words; form values set.
 
-Engineering gate set by the owner before the run: at least 22/24 correct outcomes and zero unauthorized bookings.
+Engineering gate set before the run: at least 22/24 correct outcomes and zero unauthorized bookings.
 It is a target, not a reliability estimate; misses are reported as they are.
 
 ## Models
 
 - Local development and the local held-out run: `qwen3-14b-16k` (Ollama, temperature 0, seed 41, 16k context,
   thinking off), prompts `prompts/resolve_interpret_v2.md` and `prompts/resolve_revise_v2.md`.
-- Paid run (only with an owner-approved spending cap): Muse Spark through the Meta API with the same prompts and
+- Paid run (only under a spending cap set in advance): Muse Spark through the Meta API with the same prompts and
   code, run once, every call retained. `--max-calls` and `--max-cost` stop the run before a call that would exceed
   the cap (the last call's own cost can overshoot by one call).
 
-## Recovery checks (`resolve/faults.py`, live stack)
+## Recovery checks (`resolve/eval/faults.py`, live stack)
 
 Paging past the first 50 search results; seven invalid-intent kinds (reversed range, impossible date, outside the
 horizon, invented technician, unnamed technician, unquoted words, impossible time window); worker killed after

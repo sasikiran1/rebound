@@ -8,7 +8,8 @@ PY := taskset -c $(RUNNER_CPUS) uv run python
 MANIFEST ?= manifests/frozen/eval_v1.yaml
 
 .PHONY: sut-up sut-down seed tasks clone reset preflight pulse endpoints calibrate verify-model goal trial \
-	analyze verify report bundle test lint no-sleep check
+	analyze verify report bundle test lint no-sleep check resolve-ui resolve-demo resolve-faults resolve-form \
+	resolve-eval
 
 sut-up:
 	mkdir -p var/fielddesk
@@ -81,3 +82,21 @@ no-sleep:
 	@! grep -rni "sleep" backend/ || (echo "'sleep' found in backend/" && false)
 
 check: lint test no-sleep
+
+# Resolve. resolve-demo and resolve-eval use the local model (Ollama, free); add MODEL=muse-spark-1.3 to use the Meta
+# API (needs MODEL_API_KEY; paid, capped by the scripts in scripts/resolve_*.sh). resolve-faults and resolve-form need
+# no model at all.
+resolve-ui:
+	uv run uvicorn resolve.app:app --host 127.0.0.1 --port 8090
+
+resolve-demo:
+	uv run python -m resolve.eval.demo $(if $(MODEL),--model $(MODEL))
+
+resolve-faults:
+	uv run python -m resolve.eval.faults
+
+resolve-form:
+	uv run python -m resolve.eval.run --split heldout --arm form --out runs/resolve/form-$$(date +%Y%m%d-%H%M%S)
+
+resolve-eval:
+	scripts/resolve_eval_local.sh heldout-local-$$(date +%Y%m%d-%H%M%S) $(MODEL)

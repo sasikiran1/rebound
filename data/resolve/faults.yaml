@@ -1,4 +1,4 @@
-# Fixtures for the recovery and validation checks (resolve/faults.py). Not conversations: the checks drive the
+# Fixtures for the recovery and validation checks (resolve/eval/faults.py). Not conversations: the checks drive the
 # service with structured intents or canned model outputs, so the outcome depends only on the deterministic path.
 
 - id: F1

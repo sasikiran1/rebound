@@ -21,7 +21,7 @@ An agent says "Done!", the API returns 200 OK, and the booking is wrong: Muse Sp
 | Capable form with correct entries (same execution path) | 24/24: when the intent is right, the deterministic path makes no errors |
 | Recovery checks on the live stack | 9/9: paging past 50 results, 7 invalid-intent kinds, crashes at 3 points, a real lost acknowledgment, renewed permission, correction preserved, confirm-before-booking |
 
-The owner's bar for Resolve was at least 22/24 and zero unauthorized bookings: the first part is met, the second is not (one case, H15, "same time of day as my current booking", was read as "morning"). Details: [`docs/resolve_results.md`](docs/resolve_results.md).
+The pass mark I set for Resolve before the run was at least 22/24 and zero unauthorized bookings: the first part is met, the second is not (one case, H15, "same time of day as my current booking", was read as "morning"). Details: [`docs/resolve_results.md`](docs/resolve_results.md).
 
 ## Resolve
 
@@ -35,15 +35,19 @@ customer text --> model (Muse): typed intent, each rule quoting the customer's w
               --> independent SQL oracle vs. hand-written expected outcomes
 ```
 
-The model never sees availability, so it cannot invent slots; it never books, so it cannot book without authority. A correction is applied as explicit operations on the stored intent, so untouched constraints survive by construction. In product mode the customer confirms the exact slot before anything is written.
+The model never sees availability, so it cannot invent slots; it never books, so it cannot book without authority. A correction is applied as explicit operations on the stored intent, so untouched constraints survive by construction. In product mode the customer confirms the exact slot before anything is written. Design, failure handling and security: [`docs/architecture.md`](docs/architecture.md) and the [decision records](docs/decisions/).
 
 ```bash
-make sut-up && make seed            # stack and template data (see Quick start)
-uv run uvicorn resolve.ui:app --port 8090 &      # the screen: http://127.0.0.1:8090/
-uv run python -m resolve.demo                    # full story on the local model (Ollama); free
-scripts/resolve_demo_muse.sh                     # same on Muse Spark (paid, capped at 6 calls / $0.25)
-uv run python -m resolve.faults                  # recovery checks
-uv run python -m resolve.run --split heldout --arm form --out runs/resolve/form   # no model needed
+make sut-up && make seed      # stack and template data (see Quick start)
+make resolve-ui               # the screen: http://127.0.0.1:8090/
+make resolve-demo             # full story on the local model (Ollama); free
+scripts/resolve_demo_muse.sh  # same on Muse Spark (paid, capped at 6 calls / $0.25)
+make resolve-faults           # recovery checks on the live stack, no model
+make resolve-form             # held-out cases through the form arm, no model
+
+# deployed: worker + service containers (service on 127.0.0.1:8091, no auth: localhost only)
+docker compose -f docker/compose.yml --profile resolve up -d
+uv run python scripts/resolve_service_e2e.py   # intake over HTTP -> worker -> confirm -> SQL verdict (1 Muse call)
 ```
 
 ### When not to use AI here
@@ -152,14 +156,15 @@ One paid model, one workflow, one fault type, one gate setting, one deliberately
 
 | Path | Contents |
 |---|---|
-| `resolve/` | Resolve: intent contract, evaluator, store, worker, oracle, runner, faults, demo, screen |
+| `resolve/` | Resolve product: intent contract, interpretation, evaluator, service, store, worker, FieldDesk client, screen |
+| `resolve/eval/` | Resolve evaluation: case seeding, runner arms, SQL oracle, recovery checks, scripted demo |
 | `data/resolve/` | Resolve cases: 6 dev, 24 frozen held-out, 4 fault fixtures |
 | `backend/` | FieldDesk, the API under test, with the admission gate |
 | `harness/` | Trial runner, agents, scripted clients, fault control |
 | `oracle/` | SQL verdicts on business outcomes |
 | `analysis/` | Recovery metrics, contracts and reports |
 | `manifests/`, `prompts/`, `data/` | Experiment settings, agent prompt and tools, seeded data and task sets |
-| `docker/` | Compose stack (fixed CPU sets; live trials need at least 16 vCPUs, `make verify` does not) |
+| `docker/` | Compose stack (Resolve containers under the `resolve` profile) (fixed CPU sets; live trials need at least 16 vCPUs, `make verify` does not) |
 | `docs/` | [Guide to the documents](docs/README.md), starting with the frozen rules in [`docs/protocol.md`](docs/protocol.md) |
 | `scripts/` | [Guide to the scripts](scripts/README.md) |
 

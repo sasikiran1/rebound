@@ -43,7 +43,7 @@ Models: gemma4-12b-16k:latest and llama3.1:8b (Ollama library; no thinking field
 but removed before any campaign trial: in the ctx16k semantic runs its median model call took 12.3 s (about 27
 output tokens/s, 100–400 visible tokens per call), which under the rate rule allows about 2 goals per trial. The
 first replacement, the Hugging Face GGUF of Llama 3.1 8B, was dropped before any campaign trial because through
-Ollama it wrote tool calls as plain text after its first call (semantic_hf_v1). The user then chose the Ollama
+Ollama it wrote tool calls as plain text after its first call (semantic_hf_v1). I then chose the Ollama
 library build of the same weights; it enters the campaign only if its semantic runs show working multi-step tool
 calls (at least one correct booking and one correct deferral among the TECH and FULL cases).
 Outcome of that check (sem_llama31_v1, before any campaign trial): 0 of 12 correct; after its first call it wrote

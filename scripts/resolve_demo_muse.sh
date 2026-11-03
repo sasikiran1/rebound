@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
-uv run python -m resolve.demo --model muse-spark-1.3 --run "${1:-demo-muse}" --max-calls 6 --max-cost 0.25
+uv run python -m resolve.eval.demo --model muse-spark-1.3 --run "${1:-demo-muse}" --max-calls 6 --max-cost 0.25

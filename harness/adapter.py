@@ -88,7 +88,7 @@ class GoalState:
     requirements: dict | None = None  # record_requirements: what the model says the customer asked for
     seen_slots: dict[int, dict] = field(default_factory=dict)  # slots actually shown to the model
     requirement_blocks: int = 0
-    waits: int = 0  # wait tool (policy probe tool set)
+    waits: int = 0  # wait tool (policy probe tool set); not counted in tool_calls
     wait_s: float = 0.0
 
 
@@ -236,7 +236,8 @@ class ToolAdapter:
         `deadline` (monotonic) stops further retries once reached. `attempt_budget` caps the goal's total HTTP attempts,
         internal retries included; a call that would exceed it sends nothing and returns `budget_exhausted`."""
         state.ops += 1
-        state.tool_calls += 1
+        if name != "wait":  # a pause sends nothing, so it does not spend the goal's tool-call budget (wait-tool-v1
+            state.tool_calls += 1  # counted it, and its one lost goal ran out of calls while waiting)
         k = state.ops
         ids = {
             "goal_id": scope.goal_id, "actor_id": scope.actor_id, "actor_kind": scope.actor_kind,

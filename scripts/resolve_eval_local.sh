@@ -11,5 +11,5 @@ git rev-parse HEAD > "$OUT/commit.txt"
 git status --short > "$OUT/worktree.txt"
 sha256sum data/resolve/heldout.yaml prompts/resolve_interpret_v2.md prompts/resolve_revise_v2.md > "$OUT/inputs.sha256"
 for ARM in resolve oneshot form; do
-  uv run python -m resolve.run --split heldout --arm "$ARM" --model "$MODEL" --out "$OUT" 2>&1 | tee "$OUT/$ARM.log"
+  uv run python -m resolve.eval.run --split heldout --arm "$ARM" --model "$MODEL" --out "$OUT" 2>&1 | tee "$OUT/$ARM.log"
 done

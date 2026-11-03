@@ -15,4 +15,8 @@ Run these from the repository root. Frozen records cite several of these paths, 
 | `interface_competence.py` | Local check: can an agent tell an evaluation from a booking, with and without effect-status wording |
 | `policy_probe.py` | Refusal probe: served agent policy, wait tool, continuation and pacing arms |
 | `build_ui.py` | Generate `ui/index.html` from recorded bundles |
+| `resolve_eval_local.sh`, `resolve_muse.sh` | Resolve held-out evaluation on the local model (all three arms), or on Muse one part at a time under a hard cap |
+| `resolve_demo_muse.sh` | Resolve demonstration on Muse (at most 6 calls / $0.25) |
+| `resolve_service_e2e.py` | Check the deployed Resolve containers over HTTP: intake, worker, confirm, SQL verdict |
+| `resolve_inspect.py` | Print a Resolve run's intents, validator problems, decisions and questions per case |
 | `local_models/` | Local-model study: campaign runner and specs, smoke test, semantic cases, raw replay, tool-schema generator. Live runs use `ollama_relay_win.py`, which `harness/ollama.py` starts with the Windows Python |

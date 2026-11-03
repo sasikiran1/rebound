@@ -1,6 +1,6 @@
 """Recovery and validation checks for the Resolve path, on the live stack (FieldDesk, PostgreSQL, Toxiproxy).
 
-    uv run python -m resolve.faults [--only truncation,crash_after_send,...]
+    uv run python -m resolve.eval.faults [--only truncation,crash_after_send,...]
 
 Where the check is about the deterministic path, the model is replaced by canned outputs (CannedModel), so a pass or
 fail cannot depend on model luck; the canned outputs are listed in each check. Every check judges the database with
@@ -22,11 +22,11 @@ import httpx
 
 from harness import settings
 from harness.fault import Toxiproxy
-from resolve import cases as C
 from resolve.api import PAGE, FieldDesk
+from resolve.eval import cases as C
+from resolve.eval.oracle import verdict
+from resolve.eval.run import form_intent
 from resolve.interpret import CallLog
-from resolve.oracle import verdict
-from resolve.run import form_intent
 from resolve.service import Resolve
 from resolve.store import Store
 from resolve.worker import Worker

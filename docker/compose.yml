@@ -80,5 +80,50 @@ services:
       timeout: 2s
       retries: 30
 
+  # Resolve (opt-in: `docker compose -f docker/compose.yml --profile resolve up -d`). Its store is the `resolve`
+  # schema in the trial database, reached directly, not through Toxiproxy: a FieldDesk outage does not take it down.
+  resolve-worker:
+    profiles: ["resolve"]
+    build:
+      context: ..
+      dockerfile: docker/resolve.Dockerfile
+    image: rebound-resolve
+    environment: &resolve-env
+      REBOUND_PG_HOST: postgres
+      REBOUND_PG_PORT: "5432"
+      REBOUND_FIELDDESK_URL: http://fielddesk:8080
+      FIELDDESK_DB: ${FIELDDESK_DB:-fielddesk_trial}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD:-oracle}
+    command: ["python", "-m", "resolve.worker", "--owner", "worker-compose"]
+    stop_grace_period: 15s  # SIGTERM: finish the request in hand, then exit
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fielddesk:
+        condition: service_healthy
+
+  resolve-service:
+    profiles: ["resolve"]
+    image: rebound-resolve
+    environment:
+      <<: *resolve-env
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      RESOLVE_MODEL: ${RESOLVE_MODEL:-muse-spark-1.3}
+      RESOLVE_MAX_CALLS: ${RESOLVE_MAX_CALLS:-50}
+      RESOLVE_MAX_COST: ${RESOLVE_MAX_COST:-1.00}
+      RESOLVE_CONFIRM: ${RESOLVE_CONFIRM:-true}
+    command: ["uvicorn", "resolve.app:app", "--host", "0.0.0.0", "--port", "8090", "--no-access-log"]
+    ports:
+      - "127.0.0.1:8091:8090"  # no authentication: localhost only
+    depends_on:
+      resolve-worker:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   pgdata:
