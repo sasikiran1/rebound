@@ -25,11 +25,16 @@ backend = [
     "fastapi",
     "uvicorn",
 ]
+# A CalDAV server (Radicale) for the technicians' calendars, locally and in the resolve-calendar container.
+calendar = [
+    "radicale>=3.9.0",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
     { include-group = "backend" },
+    { include-group = "calendar" },
 ]
 
 [tool.uv]

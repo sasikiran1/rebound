@@ -4,7 +4,7 @@ FROM python@sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bf
 RUN pip install --no-cache-dir uv==0.13.6
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --group backend --no-install-project
+RUN uv sync --frozen --no-dev --group backend --group calendar --no-install-project
 COPY harness/ ./harness/
 COPY resolve/ ./resolve/
 COPY data/resolve/ ./data/resolve/

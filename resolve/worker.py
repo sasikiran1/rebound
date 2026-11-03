@@ -206,16 +206,22 @@ async def _main() -> None:
     end = loop.time() + max_s if max_s else None
     try:
         if a.request is None:  # service mode
+            from resolve.calendar import CalendarSync
             from resolve.notify import Notifier
             notifier = Notifier.from_env(store)  # None unless RESOLVE_SMTP_HOST is set
+            calendar = CalendarSync.from_env(store, api)  # None unless RESOLVE_CALDAV_URL is set
             print(json.dumps({"owner": a.owner, "mode": "service", "started": True,
-                              "notifications": bool(notifier)}), flush=True)
+                              "notifications": bool(notifier), "calendar": bool(calendar)}), flush=True)
             while not stop.is_set() and (end is None or loop.time() < end):
                 res = await worker.run_once()
                 if notifier is not None:
                     sent = await notifier.drain()
                     if any(sent.values()):
                         print(json.dumps({"owner": a.owner, "notifications": sent}), flush=True)
+                if calendar is not None:
+                    synced = await calendar.drain()
+                    if any(synced.values()):
+                        print(json.dumps({"owner": a.owner, "calendar": synced}), flush=True)
                 if res is not None:
                     print(json.dumps({"owner": a.owner, **res}, default=str), flush=True)
                     continue  # more work may be waiting
@@ -224,6 +230,8 @@ async def _main() -> None:
                 except TimeoutError:
                     pass
             print(json.dumps({"owner": a.owner, "mode": "service", "stopped": True}), flush=True)
+            if calendar is not None:
+                await calendar.close()
             return
         while end is None or loop.time() < end:
             req = await store.get(a.request)

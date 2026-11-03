@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS resolve.notifications (
     created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (request_id, turn_n)
 );
+-- One row per completed request: its appointment mirrored into the technicians' CalDAV calendars.
+CREATE TABLE IF NOT EXISTS resolve.calendar_sync (
+    request_id      text    PRIMARY KEY REFERENCES resolve.requests (request_id),
+    status          text    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'synced', 'failed')),
+    attempts        integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    last_error      text,
+    event_url       text,
+    synced_at       timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT clock_timestamp()
+);
 CREATE TABLE IF NOT EXISTS resolve.events (
     id         bigserial PRIMARY KEY,
     request_id text NOT NULL,
@@ -138,7 +149,7 @@ class Store:
 
     async def reset(self, request_id: str) -> None:
         async with self.pool.acquire() as c, c.transaction():
-            for t in ("events", "notifications", "turns", "versions"):
+            for t in ("events", "notifications", "calendar_sync", "turns", "versions"):
                 await c.execute(f"DELETE FROM resolve.{t} WHERE request_id = $1", request_id)
             await c.execute("DELETE FROM resolve.requests WHERE request_id = $1", request_id)
 
@@ -178,6 +189,10 @@ class Store:
                                      request_id)
         return [dict(r) for r in rows]
 
+    async def calendar_sync(self, request_id: str) -> dict | None:
+        row = await self.pool.fetchrow("SELECT * FROM resolve.calendar_sync WHERE request_id = $1", request_id)
+        return dict(row) if row else None
+
     async def turns(self, request_id: str) -> list[dict]:
         rows = await self.pool.fetch("SELECT * FROM resolve.turns WHERE request_id = $1 ORDER BY n", request_id)
         return [dict(r) for r in rows]
@@ -210,7 +225,8 @@ class Store:
             return v
 
     async def set_state(self, request_id: str, state: str, *, owner: str | None = None, **fields) -> bool:
-        """Move to `state`. With `owner`, only while that worker still holds the lease (a reclaimed lease wins)."""
+        """Move to `state`. With `owner`, only while that worker still holds the lease (a reclaimed lease wins).
+        Completing a request also queues its calendar sync in the same transaction."""
         sets = ["state = $2", "updated_at = clock_timestamp()"]
         args = [request_id, state]
         for k, v in fields.items():
@@ -222,7 +238,11 @@ class Store:
         if owner is not None:
             args.append(owner)
             where += f" AND state = 'claimed' AND lease_owner = ${len(args)}"
-        res = await self.pool.execute(f"UPDATE resolve.requests SET {', '.join(sets)} WHERE {where}", *args)
+        async with self.pool.acquire() as c, c.transaction():
+            res = await c.execute(f"UPDATE resolve.requests SET {', '.join(sets)} WHERE {where}", *args)
+            if state == "completed" and res.endswith(" 1"):
+                await c.execute("INSERT INTO resolve.calendar_sync (request_id) VALUES ($1) ON CONFLICT DO NOTHING",
+                                request_id)
         return res.endswith(" 1")
 
     async def claim(self, owner: str, lease_s: float, request_id: str | None = None) -> dict | None:

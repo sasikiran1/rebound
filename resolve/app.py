@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from harness import settings
 from resolve import intent as I
 from resolve.api import ApiError, FieldDesk
+from resolve.calendar import CalDAV
 from resolve.eval import cases as C
 from resolve.eval.oracle import verdict
 from resolve.evaluate import describe
@@ -49,7 +50,12 @@ async def lifespan(_app):
     state["cases"] = {c.id: c for split in ("dev", "heldout", "faults") for c in C.load(C.CASE_DIR / f"{split}.yaml")}
     state["api"] = FieldDesk(settings.FIELDDESK_URL, actor="resolve-service")
     state["model"] = None  # created on first intake call, so the screen needs no model key
+    url = os.environ.get("RESOLVE_CALDAV_URL")  # read back what the calendars show, for the screen
+    state["caldav"] = CalDAV(url, os.environ.get("RESOLVE_CALDAV_USER"),
+                             os.environ.get("RESOLVE_CALDAV_PASSWORD")) if url else None
     yield
+    if state["caldav"] is not None:
+        await state["caldav"].close()
     if state["model"] is not None and hasattr(state["model"].client, "close"):
         await state["model"].client.close()
     await state["api"].close()
@@ -166,6 +172,27 @@ def _turn_times(rid: str) -> tuple[list[dt.datetime] | None, str]:
     return None, "store"
 
 
+async def _calendar(req: dict, names: dict) -> dict | None:
+    """The request's calendar sync, and which technicians' calendars hold the appointment now (read over CalDAV)."""
+    row = await state["store"].calendar_sync(req["request_id"])
+    caldav: CalDAV | None = state["caldav"]
+    out = {"status": row["status"], "attempts": row["attempts"], "error": row["last_error"],
+           "event_url": row["event_url"]} if row else {"status": None}
+    if caldav is None:
+        return out | {"configured": False}
+    held = []
+    try:
+        for tid, name in names.items():
+            body = await caldav.get_event(tid, req["appointment_id"])
+            start = next((x[8:] for x in (body or "").splitlines() if x.startswith("DTSTART:")), None)
+            if start:
+                held.append({"technician": name, "starts_at": dt.datetime.strptime(start, "%Y%m%dT%H%M%S")
+                             .isoformat(timespec="minutes")})
+    except Exception as exc:  # the screen shows the calendar as unreachable; nothing else depends on it
+        return out | {"configured": True, "unreachable": f"{type(exc).__name__}"}
+    return out | {"configured": True, "held_by": held}
+
+
 @app.get("/api/request")
 async def request(rid: str):
     store: Store = state["store"]
@@ -201,6 +228,7 @@ async def request(rid: str):
                            "attempts": n["attempts"], "error": n["last_error"],
                            "at": (n["sent_at"] or n["created_at"]).isoformat()}
                           for n in await store.notifications(rid)],
+        "calendar": await _calendar(req, names),
     }
     case_id = rid.split(":")[1] if rid.count(":") >= 2 else None
     case = state["cases"].get(case_id)

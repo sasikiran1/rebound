@@ -16,7 +16,8 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 2. **Resolve**, a scheduling-recovery assistant: the model turns a customer's words into typed, versioned constraints
    that must quote those words; deterministic code books only what the customer authorized, asks before any
    trade-off with real open slots, survives worker crashes and lost acknowledgments without double-booking, and
-   confirms the exact slot before writing. Deployed as worker and service containers with an intake API.
+   confirms the exact slot before writing, emails the customer and mirrors each booking into the technician's
+   calendar over CalDAV. Deployed as worker, service, mail and calendar containers with an intake API.
 
 ## Results (measured)
 
@@ -32,7 +33,7 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 | Same model, one-shot extraction | 15/24, 2 unauthorized |
 | Form with perfect entries, same execution path | 24/24 |
 | Llama 3.1 8B in the same pipeline | 10/24, 2 unauthorized |
-| Recovery checks on the live stack | 11/11 |
+| Recovery checks on the live stack | 12/12 |
 | Total model spend for Resolve | $0.70 (106 calls) |
 
 ## Decisions that mattered
@@ -54,7 +55,8 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 - A careful rule parser came within 3 cases of the model on conversations I wrote. The model's edge is robustness
   to phrasing; proving that needs messages written by someone else.
 - Llama 3.1 8B: 0/24 through raw tool use in the study, 10/24 inside the validated pipeline.
-- Next: customer messages written by other people, a real calendar and email provider instead of local stand-ins,
+- Next: customer messages written by other people, a hosted calendar and email provider instead of the local CalDAV
+  server and test inbox,
   and real scheduling data on how often requests arrive as free text.
 
 Code, evidence and every number: <https://github.com/sasikiran1/rebound>

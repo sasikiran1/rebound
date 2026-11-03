@@ -14,6 +14,7 @@
  7. A second worker process reclaims the expired lease, reconciles with the same idempotency key and confirms the
     booking without a second write.
  8. The independent SQL oracle judges the final database effect against the case file.
+ 9. With RESOLVE_CALDAV_URL set: the technicians' CalDAV calendars, read back before and after the change.
 Every step is printed and the full record is written to runs/resolve/demo/<run>.json.
 """
 
@@ -34,6 +35,7 @@ from harness import settings
 from harness.fault import Toxiproxy
 from resolve import intent as I
 from resolve.api import FieldDesk
+from resolve.calendar import CalendarError, CalendarSync
 from resolve.eval import cases as C
 from resolve.eval.oracle import verdict
 from resolve.models import make_model
@@ -46,6 +48,17 @@ CONFIRM_REPLY = "Yes, please book it."
 
 def say(step: str, text: str) -> None:
     print(f"[{time.monotonic() - T0:6.1f}s] {step:<10} {text}", flush=True)
+
+
+async def calendar_line(calendar: CalendarSync, case, names: dict) -> str:
+    """Which technician's CalDAV calendar holds the appointment, read back from the calendar server."""
+    held = []
+    for tid, name in names.items():
+        body = await calendar.caldav.get_event(tid, case.appointment_id) or ""
+        start = next((x[8:] for x in body.splitlines() if x.startswith("DTSTART:")), None)
+        if start:
+            held.append(f"{name}'s calendar {dt.datetime.strptime(start, '%Y%m%dT%H%M%S'):%a %b %d %H:%M}")
+    return "; ".join(held) or "in no technician's calendar"
 
 
 async def worker_process(rid: str, crash_at: str | None = None, max_s: float = 60) -> list[dict]:
@@ -87,6 +100,7 @@ async def main() -> None:
     model = make_model(a.model, out / run / "raw", a.max_calls, a.max_cost)
     svc = Resolve(store, api, model, C.TODAY, C.HORIZON_DAYS)
     names = {t["id"]: t["name"] for t in case.techs.values()}
+    calendar = CalendarSync.from_env(store, api)  # technicians' CalDAV calendars, when RESOLVE_CALDAV_URL is set
     tox_http = httpx.AsyncClient()
     tox = Toxiproxy(tox_http)
     times: list[dt.datetime] = []
@@ -102,6 +116,15 @@ async def main() -> None:
         (out / f"{run}.json").write_text(json.dumps({"request_id": rid, "case": case.id, "split": a.split,
                                                      "turn_times": []}))
         say("setup", f"fixture {case.id} seeded in region {case.region}; synthetic data, scripted customer")
+        if calendar is not None:
+            techs = [{"technician_id": t["id"], "name": t["name"]} for t in case.techs.values()]
+            try:
+                await calendar.mirror(case.appointment_id, techs)
+                say("calendar", "before: " + await calendar_line(calendar, case, names))
+            except (CalendarError, httpx.HTTPError) as exc:  # the demo goes on without the calendar
+                say("calendar", f"unreachable ({type(exc).__name__}); continuing without it")
+                await calendar.close()
+                calendar = None
 
         say("customer", case.messages[0])
         times.append(await now())
@@ -179,7 +202,13 @@ async def main() -> None:
             f"(expected one of {case.expected['final'] or 'no booking'})")
         for t in (await store.turns(rid))[-1:]:
             say("assistant", t["text"])
+        if calendar is not None and (await store.get(rid))["state"] == "completed":
+            synced = await calendar.drain(request_id=rid)
+            record["calendar"] = {"drain": synced, "sync": await store.calendar_sync(rid)}
+            say("calendar", "after: " + await calendar_line(calendar, case, names) + f"  (sync {synced})")
     finally:
+        if calendar is not None:
+            await calendar.close()
         try:
             await tox.reset()
         except httpx.HTTPError:

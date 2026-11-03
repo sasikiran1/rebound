@@ -49,6 +49,7 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | `resolve/store.py` | Durable state machine, versions, turns, events, leases, in-flight attempt | n/a |
 | `resolve/worker.py` | Claims, reconciles, searches, decides, records the attempt, writes; crash points for tests | no model involved |
 | `resolve/notify.py` | Delivers queued customer messages over SMTP, with retry and backoff | no model involved |
+| `resolve/calendar.py` | Mirrors each booking into the technicians' CalDAV calendars, with retry and backoff | no model involved |
 | `resolve/api.py` | FieldDesk client: one attempt per call, 3 s deadline, paging, call log | n/a |
 | `resolve/models.py` | Meta API or Ollama behind one `Model` with call and spend caps | n/a |
 | `resolve/app.py` | Screen, read APIs, health, metrics, intake | n/a |
@@ -93,17 +94,22 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | Database link reset in the middle of the write | FieldDesk answers 500; the attempt stays uncertain; reconcile commits exactly once | `fault_shapes` |
 | Database link silent during the search | Timeout; request released; booked once the link is back | `fault_shapes` |
 | Mail server refuses or is down | The message stays queued with its error; retried with backoff (5 s, 10 s, ...); failed after 6 attempts | `notifications` |
+| Calendar server down when the booking completes | Booking unaffected; the calendar sync stays queued and catches up; stale copies in other technicians' calendars removed | `calendar` |
 
 Guarantee, as tested: with one worker holding a request at a time and FieldDesk's idempotency-key table, every
 injected crash point ends with at most one applied change. This is not a general exactly-once claim.
 
 ## Deployment
 
-`docker compose -f docker/compose.yml --profile resolve up -d` adds three containers to the existing stack, from one
+`docker compose -f docker/compose.yml --profile resolve up -d` adds four containers to the existing stack, from one
 image (`docker/resolve.Dockerfile`, non-root user):
 
-- `resolve-worker`: `python -m resolve.worker` in service mode; claims any ready request and delivers due customer
-  messages (`resolve/notify.py`); on SIGTERM finishes the request in hand and exits 0.
+- `resolve-worker`: `python -m resolve.worker` in service mode; claims any ready request, delivers due customer
+  messages (`resolve/notify.py`) and calendar syncs (`resolve/calendar.py`); on SIGTERM finishes the request in hand
+  and exits 0.
+- `resolve-calendar`: a CalDAV server (Radicale, `resolve/eval/calserver.py`) on `127.0.0.1:5232` with one login,
+  storing calendars in `var/calendar`; any calendar client can subscribe to `/fielddesk/tech-<id>/`. A hosted CalDAV
+  provider replaces it by `RESOLVE_CALDAV_URL / USER / PASSWORD`.
 - `resolve-service`: `uvicorn resolve.app:app`, published on `127.0.0.1:8091`; `/healthz` checks the store and
   FieldDesk.
 - `resolve-mail`: a local SMTP test inbox (`resolve/eval/mailsink.py`) that stores every message in
@@ -112,9 +118,10 @@ image (`docker/resolve.Dockerfile`, non-root user):
 Configuration (environment): `REBOUND_PG_HOST/PORT`, `FIELDDESK_DB`, `REBOUND_FIELDDESK_URL`, `MODEL_API_KEY`,
 `RESOLVE_MODEL` (default `muse-spark-1.3`), `RESOLVE_MAX_CALLS` / `RESOLVE_MAX_COST` (per-process caps, default 50 /
 $1.00), `RESOLVE_CONFIRM` (default `true`), `RESOLVE_TODAY` (fixture clock by default), `RESOLVE_SMTP_HOST/PORT`,
-`RESOLVE_SMTP_USER/PASSWORD` (STARTTLS when set), `RESOLVE_MAIL_FROM`. Verified end to end over HTTP with
-`scripts/resolve_service_e2e.py`: intake, worker container, confirmation email, yes, booking, "moved" email, SQL
-verdict.
+`RESOLVE_SMTP_USER/PASSWORD` (STARTTLS when set), `RESOLVE_MAIL_FROM`, `RESOLVE_CALDAV_URL/USER/PASSWORD`,
+`RESOLVE_CALDAV_EVENT_MIN`. Verified end to end over HTTP with `scripts/resolve_service_e2e.py`: intake, worker
+container, confirmation email, yes, booking, "moved" email, SQL verdict; with `--form` (no model call), booking and
+the event in the technician's calendar, read back over CalDAV.
 
 ## Why a live stack, not mocks
 
@@ -151,4 +158,5 @@ Short records in [decisions/](decisions/):
 [0003 the model never sees availability](decisions/0003-model-without-availability.md),
 [0004 confirm before booking](decisions/0004-confirm-before-booking.md),
 [0005 retries in middleware, not a model tool](decisions/0005-retries-in-middleware.md),
-[0006 notifications from a transactional queue](decisions/0006-notifications.md).
+[0006 notifications from a transactional queue](decisions/0006-notifications.md),
+[0007 technicians' calendars mirrored over CalDAV](decisions/0007-calendar-sync.md).
