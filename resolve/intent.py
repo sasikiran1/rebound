@@ -54,8 +54,10 @@ RULE = {
         "time": TIME,
         "technician_ids": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "maxItems": 6},
         "only_on_dates": {"type": "array", "items": DATE, "minItems": 1, "maxItems": 7,
-                          "description": "Optional: the rule applies only on these dates."},
-        "reference": {"type": "string", "description": "Optional: id of the reference that grounds this rule."},
+                          "description": "Optional, time and technician rules only: the rule applies only on these "
+                                         "dates."},
+        "from_appointment": {"type": "integer",
+                             "description": "Optional: appointment_id of the past visit the customer pointed at."},
         "id": {"type": "string"},
     },
     "required": ["kind", "strength", "quote"],
@@ -70,13 +72,6 @@ INTENT_SCHEMA = {
             "type": "array", "maxItems": MAX_ALTERNATIVES + 1,  # two from the first message, one more from a reply
             "items": {"type": "object", "properties": {"label": {"type": "string"}, "rules": {**RULES, "minItems": 1}},
                       "required": ["label", "rules"], "additionalProperties": False},
-        },
-        "references": {
-            "type": "array", "maxItems": 4,
-            "items": {"type": "object",
-                      "properties": {"id": {"type": "string"}, "phrase": {"type": "string"},
-                                     "appointment_id": {"type": "integer"}},
-                      "required": ["id", "phrase", "appointment_id"], "additionalProperties": False},
         },
         "unclear": {
             "type": "array", "maxItems": 2,
@@ -186,8 +181,15 @@ def _rule_problems(rule: dict, where: str, facts: dict, said: str | None, refs: 
             p.append(f"{tag}: {s} is outside the bookable horizon {today}..{last}")
     if kind == "dates_between" and not p and _date(rule["date_from"]) > _date(rule["date_to"]):
         p.append(f"{tag}: date_from {rule['date_from']} is after date_to {rule['date_to']}")
+    if kind in DATE_KINDS and rule.get("only_on_dates"):
+        p.append(f"{tag}: only_on_dates is for time and technician rules; a date rule already names its dates")
     if said is not None and normalize(rule["quote"]) not in said:
         p.append(f"{tag}: quote {rule['quote']!r} is not in the customer's words; quote them exactly")
+    ref = None
+    if rule.get("from_appointment") is not None:
+        ref = refs.get(rule["from_appointment"])
+        if ref is None:
+            p.append(f"{tag}: appointment {rule['from_appointment']} is not one of this customer's past visits")
     if kind in ("technician_is", "technician_is_not") and said is None:  # form: picked from the roster
         p += [f"{tag}: technician {tid} is not on the roster" for tid in rule["technician_ids"]
               if tid not in {t["technician_id"] for t in facts["technicians"]}]
@@ -197,15 +199,47 @@ def _rule_problems(rule: dict, where: str, facts: dict, said: str | None, refs: 
             if tid not in roster:
                 p.append(f"{tag}: technician {tid} is not on the roster")
                 continue
-            named = any(len(w) > 2 and re.search(rf"\b{re.escape(w)}\b", said)
-                        for w in normalize(roster[tid]).split())
-            ref = refs.get(rule.get("reference", ""))
-            grounded = ref is not None and ref.get("technician_id") == tid
-            if not (named or grounded):
-                p.append(f"{tag}: technician {tid} ({roster[tid]}) was not named by the customer and no reference "
-                         f"to a past appointment with them supports it")
-    if rule.get("reference") and rule["reference"] not in refs:
-        p.append(f"{tag}: unknown reference {rule['reference']!r}")
+            if ref is not None:
+                if ref["technician_id"] != tid:
+                    p.append(f"{tag}: past visit {ref['appointment_id']} was with technician "
+                             f"{ref['technician_id']} ({ref['technician_name']}), not {tid}")
+                continue
+            if not _named(roster[tid], said):
+                p.append(f"{tag}: technician {tid} ({roster[tid]}) was not named by the customer; set "
+                         f"from_appointment if they pointed at a past visit, or leave the technician out")
+        if where != "unclear reading":
+            p += _name_collisions(rule, roster, said, tag)
+    return p
+
+
+DATE_KINDS = ("dates_between", "on_dates", "not_on_dates")
+
+
+def _words(name: str) -> list[str]:
+    return [w for w in normalize(name).split() if len(w) > 2]
+
+
+def _named(name: str, said: str) -> bool:
+    return any(re.search(rf"\b{re.escape(w)}\b", said) for w in _words(name))
+
+
+def _name_collisions(rule: dict, roster: dict[int, str], said: str, tag: str) -> list[str]:
+    """A name the customer used that fits several technicians, and nothing else they said tells them apart."""
+    p = []
+    for tid in rule["technician_ids"]:
+        if rule.get("from_appointment") is not None or tid not in roster:  # unknown ids are reported already
+            continue
+        for w in _words(roster[tid]):
+            if not re.search(rf"\b{re.escape(w)}\b", said):
+                continue
+            same = [t for t, n in roster.items() if w in _words(n)]
+            told_apart = [t for t in same if any(re.search(rf"\b{re.escape(x)}\b", said)
+                                                 for x in _words(roster[t]) if x != w)]
+            if len(same) > 1 and len(told_apart) != 1:
+                names = ", ".join(roster[t] for t in same)
+                p.append(f"{tag}: the customer's {w!r} fits {len(same)} technicians ({names}); do not guess or "
+                         f"merge them: put the phrase in `unclear` with one reading per technician")
+                return p
     return p
 
 
@@ -230,15 +264,8 @@ def validate(intent: dict, facts: dict, customer_text: str | None) -> list[str]:
         path = "/".join(str(x) for x in exc.absolute_path)
         return [f"schema at {path or 'top'}: {exc.message[:200]}"]
     said = normalize(customer_text) if customer_text is not None else None
-    history = {a["appointment_id"]: a for a in facts["history"]}
-    refs = {}
+    refs = {a["appointment_id"]: a for a in facts["history"]}
     p = []
-    for ref in intent.get("references", []):
-        appt = history.get(ref["appointment_id"])
-        if appt is None:
-            p.append(f"reference {ref['id']}: appointment {ref['appointment_id']} is not in this customer's history")
-        else:
-            refs[ref["id"]] = appt
     for rule, (kind, where) in all_rules(intent):
         label = f"alternative {where + 1}" if kind == "alternative" else kind.replace("reading", "unclear reading")
         p += _rule_problems(rule, label, facts, said, refs)
@@ -288,6 +315,10 @@ def apply_patch(intent: dict, patch: dict, proposal: dict | None) -> tuple[dict,
             else:
                 if "rule" not in op:
                     raise PatchError("replace_rule needs 'rule'")
+                if op["rule"]["kind"] != target["kind"]:  # a different kind would silently drop the old limit
+                    raise PatchError(f"replace_rule must keep the kind of {target['id']} ({target['kind']}); use "
+                                     f"add_rule for a new requirement, and remove_rule only if the customer dropped "
+                                     f"{target['id']}")
                 container[idx] = {**{k: v for k, v in op["rule"].items() if k != "id"}, "id": target["id"]}
         elif kind == "add_alternative":
             if not op.get("rules"):
@@ -331,6 +362,45 @@ def _container(intent: dict, target: dict) -> list:
             if any(r is target for r in reading["rules"]):
                 return reading["rules"]
     raise PatchError("rule not found")
+
+
+def explain_rule(rule: dict, names: dict[int, str]) -> str:
+    def day(s):
+        d = dt.date.fromisoformat(s)
+        return f"{d.strftime('%a %b')} {d.day}"
+
+    def hhmm(s):
+        return dt.datetime.strptime(s, "%H:%M").strftime("%I:%M %p").lstrip("0")
+    k = rule["kind"]
+    who = ", ".join(names.get(t, str(t)) for t in rule.get("technician_ids", []))
+    text = {
+        "dates_between": lambda: f"between {day(rule['date_from'])} and {day(rule['date_to'])}",
+        "on_dates": lambda: "on " + " or ".join(day(d) for d in rule["dates"]),
+        "not_on_dates": lambda: "not on " + " or ".join(day(d) for d in rule["dates"]),
+        "on_weekdays": lambda: "on " + "/".join(w.title() for w in rule["weekdays"]),
+        "not_on_weekdays": lambda: "not on " + "/".join(w.title() for w in rule["weekdays"]),
+        "start_at_or_after": lambda: f"starting {hhmm(rule['time'])} or later",
+        "start_before": lambda: f"starting before {hhmm(rule['time'])}",
+        "technician_is": lambda: f"with {who}",
+        "technician_is_not": lambda: f"not with {who}",
+    }[k]()
+    if rule.get("only_on_dates"):
+        text += " (on " + " or ".join(day(d) for d in rule["only_on_dates"]) + ")"
+    return text + {"must": " [fixed]", "flexible": "", "prefer": " [if possible]"}[rule["strength"]]
+
+
+def explain(intent: dict, names: dict[int, str]) -> str:
+    """Deterministic plain-language reading of an intent: what the customer will be told was understood."""
+    parts = [explain_rule(r, names) for r in intent.get("rules", [])]
+    alts = intent.get("alternatives", [])
+    if alts:
+        opts = ["; ".join(explain_rule(r, names) for r in a["rules"]) for a in alts]
+        parts.append("first choice " + opts[0] + "".join(f", otherwise {o}" for o in opts[1:]))
+    for u in intent.get("unclear", []):
+        parts.append(f"unclear: “{u['phrase']}”")
+    if intent.get("approved_slots"):
+        parts.append(f"approved slot(s) {', '.join(str(s) for s in intent['approved_slots'])}")
+    return "; ".join(parts) or "any open time"
 
 
 def diff(old: dict, new: dict) -> dict:

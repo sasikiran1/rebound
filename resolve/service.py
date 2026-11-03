@@ -53,8 +53,9 @@ class Resolve:
         if out.value is not None:
             v = await self.store.approve(rid, out.value, {"turn": turns[-1]["n"], "by": "customer",
                                                           "text": turns[-1]["text"]}, None)
-            await self.store.add_turn(rid, "assistant", f"Understood: {out.value.get('summary', '').strip()} "
-                                      "I'll book it as soon as a matching time is confirmed.", "ack")
+            names = {t["technician_id"]: t["name"] for t in facts["technicians"]}
+            await self.store.add_turn(rid, "assistant", f"Understood: {I.explain(out.value, names)}. I'll book it "
+                                      "as soon as a matching time is confirmed.", "ack")
             return {"state": "ready", "version": v}
         return await self._unusable(rid, out)
 
@@ -108,8 +109,7 @@ class Resolve:
                                                              "answering": (req["question"] or {}).get("kind")}, delta)
         if v is None:
             return {"state": (await self.store.get(request_id))["state"], "refused": "executing"}
-        await self.store.add_turn(request_id, "assistant", f"Updated: {out.value.get('summary', '').strip()}",
-                                  "ack")
+        await self.store.add_turn(request_id, "assistant", f"Updated: {I.explain(out.value, names)}.", "ack")
         return {"state": "ready", "version": v, "diff": delta}
 
     async def approve_structured(self, request_id: str, intent: dict, by: str, turn_text: str) -> int | None:

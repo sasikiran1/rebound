@@ -17,8 +17,8 @@ from pathlib import Path
 from harness.provider import ProviderFailed, cost_usd
 from resolve import intent as I
 
-INTERPRET_PROMPT = "prompts/resolve_interpret_v1.md"
-REVISE_PROMPT = "prompts/resolve_revise_v1.md"
+INTERPRET_PROMPT = "prompts/resolve_interpret_v2.md"
+REVISE_PROMPT = "prompts/resolve_revise_v2.md"
 WEEKDAY = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
@@ -55,11 +55,16 @@ def build_facts(context: dict, appointment_id: int, today: dt.date, horizon_days
     current = next(a for a in appts if a["appointment_id"] == appointment_id)
     history = [a for a in appts if a["appointment_id"] != appointment_id]
     days = [today + dt.timedelta(days=i) for i in range(horizon_days + 1)]
+    friday = today + dt.timedelta(days=(4 - today.weekday()) % 7)
+    monday = today + dt.timedelta(days=7 - today.weekday())
     return {
         "today": today.isoformat(),
         "today_weekday": WEEKDAY[today.weekday()],
         "horizon_days": horizon_days,
         "calendar": [f"{d.isoformat()} {WEEKDAY[d.weekday()]}" for d in days],
+        "this_week": {"from": today.isoformat(), "to": friday.isoformat()},
+        "next_week": {"from": monday.isoformat(), "to": (monday + dt.timedelta(days=4)).isoformat()},
+        "next_date_for_weekday": {WEEKDAY[d.weekday()]: d.isoformat() for d in reversed(days[:7])},
         "customer": {"customer_id": context["customer_id"], "name": context["name"]},
         "appointment_being_moved": {k: current[k] for k in ("appointment_id", "service_name", "starts_at",
                                                              "technician_id", "technician_name")},
@@ -171,18 +176,28 @@ async def interpret(model: Model, facts: dict, turns: list[dict], repair: bool =
         if args is None:
             problems = ["no record_intent call" + (f"; replied with text: {text[:200]}" if text else "")]
         else:
-            draft = I.assign_ids(copy.deepcopy(args))
+            draft = copy.deepcopy(args)
+            draft.setdefault("rules", [])  # structural only: an intent may consist of unclear readings alone
+            draft = I.assign_ids(draft)
             draft.pop("approved_slots", None)
             problems = I.validate(draft, facts, said)
             if not problems:
                 return Outcome(draft, [], attempt)
             if _horizon_only(problems):  # not repairable: the date the customer asked for cannot be booked
                 return Outcome(None, problems, attempt, horizon_only=True)
-        extra = [{"role": "assistant", "content": json.dumps(args) if args else text[:1000]},
-                 {"role": "user", "content": "That intent cannot be used:\n- " + "\n- ".join(problems)
-                  + "\nCall record_intent again with a corrected intent. Never drop something the customer said "
-                    "just to make it pass; quote their exact words."}]
+        extra = _rejection(RECORD_TOOL["name"], args, text, "That intent cannot be used:\n- " + "\n- ".join(problems)
+                           + "\nCall record_intent again with a corrected intent. Never drop something the customer "
+                             "said just to make it pass; quote their exact words.")
     return Outcome(None, problems, 2)
+
+
+def _rejection(tool: str, args: dict | None, text: str, message: str) -> list[dict]:
+    """The repair turn: the rejected call and the validator's answer as its tool result (a plain assistant text
+    turn made the local model emit output its tool-call parser then dropped, dev-r2 D5)."""
+    if args is None:
+        return [{"role": "assistant", "content": text[:1000] or "(no tool call)"}, {"role": "user", "content": message}]
+    return [{"type": "function_call", "call_id": "rejected_1", "name": tool, "arguments": json.dumps(args)},
+            {"type": "function_call_output", "call_id": "rejected_1", "output": message}]
 
 
 def proposal_view(question: dict | None, names: dict[int, str]) -> dict | None:
@@ -222,7 +237,7 @@ async def revise(model: Model, facts: dict, turns: list[dict], current: dict, qu
                     return Outcome(new, [], attempt)
                 if _horizon_only(problems):
                     return Outcome(None, problems, attempt, horizon_only=True)
-        extra = [{"role": "assistant", "content": json.dumps(args) if args else text[:1000]},
-                 {"role": "user", "content": "Those operations cannot be used:\n- " + "\n- ".join(problems)
-                  + "\nCall revise_intent again with corrected operations. Quote the customer's exact words."}]
+        extra = _rejection(REVISE_TOOL["name"], args, text, "Those operations cannot be used:\n- "
+                           + "\n- ".join(problems) + "\nCall revise_intent again with corrected operations. Quote the "
+                                                     "customer's exact words.")
     return Outcome(None, problems, 2)

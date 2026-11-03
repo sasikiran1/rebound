@@ -19,6 +19,7 @@ idempotency-key table; it is not a general exactly-once claim.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
 
@@ -36,10 +37,11 @@ def _exit(point: str) -> None:
 
 class Worker:
     def __init__(self, store: Store, api: FieldDesk, owner: str = "worker-1", lease_s: float = 8.0,
-                 crash_at: str | None = None, crash=_exit):
+                 crash_at: str | None = None, crash=_exit, before_post=None):
         self.store, self.api, self.owner, self.lease_s = store, api, owner, lease_s
         self.crash_at = crash_at or os.environ.get("RESOLVE_CRASH_AT") or None
         self.crash = crash
+        self.before_post = before_post
 
     def _maybe_crash(self, point: str) -> None:
         if self.crash_at == point:
@@ -50,6 +52,20 @@ class Worker:
         if req is None:
             return None
         return await self.process(req)
+
+    async def _resend(self, req: dict) -> dict:
+        """Resend the recorded attempt with its own key. `same_slot` means the appointment already sits in that slot:
+        the first attempt committed while this resend waited on its row lock, before its key was visible. Asking
+        again then returns the committed change (`replayed`). Anything else propagates."""
+        args = (req["appointment_id"], req["customer_id"], req["attempt_slot"], req["attempt_key"])
+        for n in range(3):
+            try:
+                return await self.api.reschedule(*args)
+            except ApiError as exc:
+                if exc.body.get("type") != "same_slot" or n == 2:
+                    raise
+                await self.store.event(req["request_id"], "worker.reconcile_same_slot", attempt=n + 1)
+                await asyncio.sleep(0.5)
 
     async def _release(self, rid: str, reason: str, **fields) -> dict:
         await self.store.set_state(rid, "ready", owner=self.owner, **fields)
@@ -82,11 +98,10 @@ class Worker:
 
         if req["attempt_state"] == "sending":  # 1. reconcile an uncertain earlier attempt before anything else
             try:
-                res = await self.api.reschedule(req["appointment_id"], req["customer_id"], req["attempt_slot"],
-                                                req["attempt_key"])
+                res = await self._resend(req)
             except ApiError as exc:
-                if exc.uncertain:
-                    return await self._release(rid, f"reconcile: {exc.status}")
+                if exc.uncertain or exc.body.get("type") == "same_slot":
+                    return await self._release(rid, f"reconcile: {exc.status} {exc.body.get('type', '')}".strip())
                 await self.store.event(rid, "worker.reconciled", outcome="not_committed", error=exc.status,
                                        slot_id=req["attempt_slot"])
                 if not await self.store.record_attempt(rid, self.owner, None, None, None):
@@ -119,6 +134,8 @@ class Worker:
             if not await self.store.record_attempt(rid, self.owner, slot["slot_id"], key, "sending"):
                 return {"request_id": rid, "result": "lease_lost"}
             self._maybe_crash("after_record")
+            if self.before_post is not None:  # fault checks: inject a network fault exactly around the write
+                await self.before_post(req, slot)
             try:
                 res = await self.api.reschedule(req["appointment_id"], req["customer_id"], slot["slot_id"], key)
             except ApiError as exc:
@@ -151,3 +168,43 @@ class Worker:
         await self.store.add_turn(rid, "assistant", d.question, d.kind)
         return {"request_id": rid, "result": "needs_input", "kind": d.kind, "question": d.question,
                 "candidates": [c["slot_id"] for c in d.candidates]}
+
+
+async def _main() -> None:
+    """A separate worker process: `python -m resolve.worker --request ID [--crash-at after_send]`. Polls the request
+    until it leaves `ready` (completed, unresolved or needs_input). Prints one JSON line per pass."""
+    import argparse
+    import json
+
+    from harness import settings
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--request", required=True)
+    ap.add_argument("--owner", default=f"worker-{os.getpid()}")
+    ap.add_argument("--crash-at", choices=CRASH_POINTS)
+    ap.add_argument("--lease-s", type=float, default=8.0)
+    ap.add_argument("--poll-s", type=float, default=1.0)
+    ap.add_argument("--max-s", type=float, default=120.0)
+    a = ap.parse_args()
+    store = await Store(settings.admin_dsn(settings.TRIAL_DB)).open()
+    api = FieldDesk(settings.FIELDDESK_URL, actor="resolve-worker")
+    worker = Worker(store, api, owner=a.owner, lease_s=a.lease_s, crash_at=a.crash_at)
+    loop = asyncio.get_running_loop()
+    end = loop.time() + a.max_s
+    try:
+        while loop.time() < end:
+            req = await store.get(a.request)
+            if req is None or req["state"] in ("completed", "unresolved", "needs_input"):
+                print(json.dumps({"request_id": a.request, "state": req and req["state"], "owner": a.owner}),
+                      flush=True)
+                break
+            res = await worker.run_once(a.request)
+            if res is not None:
+                print(json.dumps({"owner": a.owner, **res}, default=str), flush=True)
+            await asyncio.sleep(a.poll_s)
+    finally:
+        await api.close()
+        await store.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(_main())

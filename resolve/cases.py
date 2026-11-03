@@ -94,7 +94,10 @@ def load(path: str | Path) -> list[Case]:
             spec = {"name": spec} if isinstance(spec, str) else dict(spec)
             techs[alias] = {"id": 900_000 + n * 10 + k, "name": spec["name"],
                             "skills": spec.get("skills", [SKILL_OF[service]])}
-        keys = [norm_key(k) for k in raw.get("open", [])] + [norm_key(k) for k in raw.get("filler", [])]
+        grid = raw.get("filler_grid")  # {techs, days, times}: every combination is an open slot
+        filler = [f"{d} {t} {tech}" for d in grid["days"] for t in grid["times"] for tech in grid["techs"]] if grid \
+            else []
+        keys = [norm_key(k) for k in raw.get("open", [])] + filler
         slots = {}
         for i, key in enumerate(dict.fromkeys(keys)):
             date, time, tech = parse_slot(key)

@@ -58,7 +58,8 @@ def make_model(name: str, raw_dir: Path | None, max_calls: int | None, max_cost:
         return Model(MetaClient(), name, max_output_tokens=4096, reasoning_effort="low", max_calls=max_calls,
                      max_cost_usd=max_cost)
     from harness.ollama import OllamaClient
-    return Model(OllamaClient(OLLAMA_OPTIONS, think=False, raw_dir=raw_dir), name, max_output_tokens=2048,
+    think = None if name.startswith(("qwen2.5", "llama", "hf.co")) else False  # None: no thinking mode to turn off
+    return Model(OllamaClient(OLLAMA_OPTIONS, think=think, raw_dir=raw_dir), name, max_output_tokens=2048,
                  reasoning_effort=None, max_calls=max_calls, max_cost_usd=max_cost)
 
 

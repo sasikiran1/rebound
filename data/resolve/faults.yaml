@@ -1,0 +1,67 @@
+# Fixtures for the recovery and validation checks (resolve/faults.py). Not conversations: the checks drive the
+# service with structured intents or canned model outputs, so the outcome depends only on the deterministic path.
+
+- id: F1
+  kind: truncation
+  title: The only eligible slot ranks after 60 open slots (beyond the first search page of 50)
+  customer: Paging Check
+  technicians: {dana: Dana Okafor, f1: Filler One, f2: Filler Two}
+  current: tue 09:00 f1
+  open: [fri2 16:00 dana]
+  filler_grid:
+    techs: [f1, f2]
+    days: [wed, thu, fri, mon2, tue2]
+    times: ["08:00", "09:00", "10:00", "11:00", "13:00", "14:00"]
+  messages: ["(structured) Dana, any day"]
+  expected:
+    authorized: [[fri2 16:00 dana]]
+    final: [fri2 16:00 dana]
+    questions: 0
+  form:
+    rules: [{kind: technician_is, technician_ids: [dana]}]
+
+- id: F2
+  kind: recovery
+  title: Plain booking used for the crash and lost-acknowledgment checks
+  customer: Crash Check
+  technicians: {a: Ana Lima, b: Ben Ross}
+  current: tue 09:00 a
+  open: [wed 10:00 a, thu 11:00 b, thu 15:00 a]
+  messages: ["(structured) Thursday morning"]
+  expected:
+    authorized: [[thu 11:00 b]]
+    final: [thu 11:00 b]
+    questions: 0
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-12]}, {kind: start_before, time: "12:00"}]
+
+- id: F3
+  kind: renewed_permission
+  title: The customer approves one proposed slot; it is taken before execution; nothing else may be booked
+  customer: Permission Check
+  technicians: {a: Ana Lima, b: Ben Ross}
+  current: tue 09:00 b
+  open: [wed 10:00 b, thu 10:00 a, thu 14:00 a]
+  messages: ["Wednesday with Ana please, check with me before anything else."]
+  replies: ["Thursday at 10 with Ana works."]
+  expected:
+    authorized: [[], [thu 10:00 a]]
+    final: []
+    questions: 2
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-11]}, {kind: technician_is, technician_ids: [a]}]
+
+- id: F4
+  kind: correction
+  title: A correction must not silently drop an unrelated hard constraint
+  customer: Correction Check
+  technicians: {gus: Gus Andersen, ida: Ida Kowal}
+  current: tue 11:00 gus
+  open: [fri 09:00 gus, fri 14:30 ida, thu 15:00 gus]
+  messages: ["Friday works for me, any time.", "Actually, make that after 2pm."]
+  expected:
+    authorized: [[fri 09:00 gus, fri 14:30 ida], [fri 14:30 ida]]
+    final: [fri 14:30 ida]
+    questions: 0
+  form:
+    rules: [{kind: on_dates, dates: [2026-11-13]}]
