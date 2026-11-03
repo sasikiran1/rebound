@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS resolve.turns (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (request_id, n)
 );
+CREATE TABLE IF NOT EXISTS resolve.notifications (
+    id              bigserial PRIMARY KEY,
+    request_id      text    NOT NULL REFERENCES resolve.requests (request_id),
+    turn_n          integer NOT NULL,
+    kind            text    NOT NULL,
+    recipient       text    NOT NULL,
+    subject         text    NOT NULL,
+    body            text    NOT NULL,
+    status          text    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+    attempts        integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    last_error      text,
+    sent_at         timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (request_id, turn_n)
+);
 CREATE TABLE IF NOT EXISTS resolve.events (
     id         bigserial PRIMARY KEY,
     request_id text NOT NULL,
@@ -77,6 +93,18 @@ CREATE TABLE IF NOT EXISTS resolve.events (
 """
 
 TERMINAL = ("completed", "unresolved")
+# Assistant turns the customer must receive, and the subject line of their message. Recipients are synthetic
+# (customer-<id>@example.test): FieldDesk stores no contact details.
+NOTIFY = {
+    "permission": "Your appointment: a question before we change it",
+    "clarify": "Your appointment: which did you mean?",
+    "no_options": "Your appointment: nothing open fits",
+    "horizon": "Your appointment: that date is too far ahead",
+    "confirm": "Your appointment: please confirm the new time",
+    "repeat": "Your appointment: could you say that another way?",
+    "completed": "Your appointment has been moved",
+    "unresolved": "Your appointment has not been changed",
+}
 
 
 def j(value) -> str:
@@ -110,7 +138,7 @@ class Store:
 
     async def reset(self, request_id: str) -> None:
         async with self.pool.acquire() as c, c.transaction():
-            for t in ("events", "turns", "versions"):
+            for t in ("events", "notifications", "turns", "versions"):
                 await c.execute(f"DELETE FROM resolve.{t} WHERE request_id = $1", request_id)
             await c.execute("DELETE FROM resolve.requests WHERE request_id = $1", request_id)
 
@@ -129,10 +157,26 @@ class Store:
         return row_dict(await self.pool.fetchrow("SELECT * FROM resolve.requests WHERE request_id = $1", request_id))
 
     async def add_turn(self, request_id: str, role: str, text: str, kind: str | None = None) -> int:
-        return await self.pool.fetchval(
-            "INSERT INTO resolve.turns (request_id, n, role, text, kind) VALUES ($1, "
-            "(SELECT coalesce(max(n), -1) + 1 FROM resolve.turns WHERE request_id = $1), $2, $3, $4) RETURNING n",
-            request_id, role, text, kind)
+        """Append a turn. An assistant turn the customer must see (a question, a confirmation, an outcome) also
+        queues its notification in the same transaction, so a question never exists without its message."""
+        async with self.pool.acquire() as c, c.transaction():
+            n = await c.fetchval(
+                "INSERT INTO resolve.turns (request_id, n, role, text, kind) VALUES ($1, "
+                "(SELECT coalesce(max(n), -1) + 1 FROM resolve.turns WHERE request_id = $1), $2, $3, $4) RETURNING n",
+                request_id, role, text, kind)
+            if role == "assistant" and kind in NOTIFY:
+                customer = await c.fetchval("SELECT customer_id FROM resolve.requests WHERE request_id = $1",
+                                            request_id)
+                await c.execute(
+                    "INSERT INTO resolve.notifications (request_id, turn_n, kind, recipient, subject, body) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
+                    request_id, n, kind, f"customer-{customer}@example.test", NOTIFY[kind], text)
+            return n
+
+    async def notifications(self, request_id: str) -> list[dict]:
+        rows = await self.pool.fetch("SELECT * FROM resolve.notifications WHERE request_id = $1 ORDER BY id",
+                                     request_id)
+        return [dict(r) for r in rows]
 
     async def turns(self, request_id: str) -> list[dict]:
         rows = await self.pool.fetch("SELECT * FROM resolve.turns WHERE request_id = $1 ORDER BY n", request_id)

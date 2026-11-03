@@ -197,6 +197,10 @@ async def request(rid: str):
                       "unclear": [u["phrase"] for u in v["intent"].get("unclear", [])],
                       "approved_slots": v["intent"].get("approved_slots", [])} for v in versions],
         "events": events,
+        "notifications": [{"kind": n["kind"], "to": n["recipient"], "subject": n["subject"], "status": n["status"],
+                           "attempts": n["attempts"], "error": n["last_error"],
+                           "at": (n["sent_at"] or n["created_at"]).isoformat()}
+                          for n in await store.notifications(rid)],
     }
     case_id = rid.split(":")[1] if rid.count(":") >= 2 else None
     case = state["cases"].get(case_id)
