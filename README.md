@@ -40,10 +40,10 @@ The model never sees availability, so it cannot invent slots; it never books, so
 ```bash
 make sut-up && make seed            # stack and template data (see Quick start)
 uv run uvicorn resolve.ui:app --port 8090 &      # the screen: http://127.0.0.1:8090/
-uv run python -m resolve.demo                    # full story on the local model (Ollama); free
+uv run python -m resolve.eval.demo                    # full story on the local model (Ollama); free
 scripts/resolve_demo_muse.sh                     # same on Muse Spark (paid, capped at 6 calls / $0.25)
-uv run python -m resolve.faults                  # recovery checks
-uv run python -m resolve.run --split heldout --arm form --out runs/resolve/form   # no model needed
+uv run python -m resolve.eval.faults                  # recovery checks
+uv run python -m resolve.eval.run --split heldout --arm form --out runs/resolve/form   # no model needed
 ```
 
 ### When not to use AI here

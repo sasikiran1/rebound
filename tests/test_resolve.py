@@ -5,11 +5,11 @@ import datetime as dt
 import httpx
 import pytest
 
-from resolve import cases as C
 from resolve import intent as I
 from resolve.api import FieldDesk
+from resolve.eval import cases as C
+from resolve.eval.oracle import _stage
 from resolve.evaluate import decide
-from resolve.oracle import _stage
 
 DANA, ALEX, JP, JW = 11, 12, 13, 14
 FACTS = {

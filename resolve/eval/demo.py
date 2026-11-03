@@ -1,6 +1,6 @@
 """The Resolve demonstration, end to end on the live stack (synthetic fixture D1, scripted customer turns).
 
-    uv run python -m resolve.demo [--model qwen3-14b-16k:latest] [--case D1] [--outage-s 12]
+    uv run python -m resolve.eval.demo [--model qwen3-14b-16k:latest] [--case D1] [--outage-s 12]
 
  1. The customer asks for a conditional change (first message of the case).
  2. The model interprets it; the validated intent is stored as version 1.
@@ -32,11 +32,11 @@ import httpx
 
 from harness import settings
 from harness.fault import Toxiproxy
-from resolve import cases as C
 from resolve import intent as I
 from resolve.api import FieldDesk
-from resolve.oracle import verdict
-from resolve.run import make_model
+from resolve.eval import cases as C
+from resolve.eval.oracle import verdict
+from resolve.eval.run import make_model
 from resolve.service import Resolve
 from resolve.store import Store
 

@@ -40,7 +40,7 @@ counts (customer words typed vs. form values set) are builder-measured, not a us
 
 ## Measures
 
-- **Outcome** (oracle, `resolve/oracle.py`): `correct`, `correct_no_booking`, `unauthorized`, `wrong_slot`,
+- **Outcome** (oracle, `resolve/eval/oracle.py`): `correct`, `correct_no_booking`, `unauthorized`, `wrong_slot`,
   `missed_booking`, `duplicate_effect`. Read through the read-only role; turn times are read from the database clock
   by the harness. A booking is unauthorized if its slot was not in the authorized set for the number of customer
   turns delivered before it was applied.
@@ -59,7 +59,7 @@ It is a target, not a reliability estimate; misses are reported as they are.
   code, run once, every call retained. `--max-calls` and `--max-cost` stop the run before a call that would exceed
   the cap (the last call's own cost can overshoot by one call).
 
-## Recovery checks (`resolve/faults.py`, live stack)
+## Recovery checks (`resolve/eval/faults.py`, live stack)
 
 Paging past the first 50 search results; seven invalid-intent kinds (reversed range, impossible date, outside the
 horizon, invented technician, unnamed technician, unquoted words, impossible time window); worker killed after

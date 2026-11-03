@@ -18,10 +18,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
 from harness import settings
-from resolve import cases as C
 from resolve import intent as I
+from resolve.eval import cases as C
+from resolve.eval.oracle import verdict
 from resolve.evaluate import describe
-from resolve.oracle import verdict
 from resolve.store import Store
 
 PAGE = Path("ui/resolve.html")

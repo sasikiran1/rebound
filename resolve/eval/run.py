@@ -1,6 +1,6 @@
 """Run Resolve cases end to end against the live FieldDesk stack and judge each one in SQL.
 
-    uv run python -m resolve.run --split dev --arm resolve --model qwen3-14b-16k:latest --out runs/resolve/dev-q1
+    uv run python -m resolve.eval.run --split dev --arm resolve --model qwen3-14b-16k:latest --out runs/resolve/dev-q1
 
 Arms (same fixtures, evaluator, store, worker and oracle):
   resolve  grounded interpretation (history + roster), one repair, clarification questions, corrections
@@ -25,11 +25,11 @@ import asyncpg
 
 from harness import settings
 from harness.provider import ProviderFailed
-from resolve import cases as C
 from resolve import intent as I
 from resolve.api import FieldDesk
+from resolve.eval import cases as C
+from resolve.eval.oracle import verdict
 from resolve.interpret import BudgetExceeded, Model, interpret
-from resolve.oracle import verdict
 from resolve.service import Resolve
 from resolve.store import TERMINAL, Store
 from resolve.worker import Worker

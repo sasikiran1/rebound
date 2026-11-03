@@ -17,7 +17,7 @@ import datetime as dt
 
 import asyncpg
 
-from resolve.cases import Case, norm_key
+from resolve.eval.cases import Case, norm_key
 
 
 async def verdict(conn: asyncpg.Connection, case: Case, turn_times: list[dt.datetime]) -> dict:

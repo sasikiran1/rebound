@@ -11,16 +11,40 @@ Only full_history continuation is supported: Ollama keeps no server-side convers
 from __future__ import annotations
 
 import asyncio
+import glob
 import itertools
 import json
+import os
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 from harness.provider import ProviderFailed
 
-WIN_PY = "/mnt/c/Users/kiran/AppData/Local/Programs/Python/Python312/python.exe"
-RELAY = r"\\wsl.localhost\Ubuntu\home\kiran\rebound\scripts\local_models\ollama_relay_win.py"
+
+def _win_python() -> str:
+    """REBOUND_WIN_PYTHON, else the first per-user Windows Python 3.12 found under /mnt/c/Users."""
+    if os.environ.get("REBOUND_WIN_PYTHON"):
+        return os.environ["REBOUND_WIN_PYTHON"]
+    found = sorted(glob.glob("/mnt/c/Users/*/AppData/Local/Programs/Python/Python312/python.exe"))
+    return found[0] if found else "python.exe"
+
+
+def _relay_path() -> str:
+    """REBOUND_OLLAMA_RELAY, else this checkout's relay script as a Windows path (wslpath -w)."""
+    if os.environ.get("REBOUND_OLLAMA_RELAY"):
+        return os.environ["REBOUND_OLLAMA_RELAY"]
+    script = Path(__file__).resolve().parent.parent / "scripts/local_models/ollama_relay_win.py"
+    try:
+        return subprocess.run(["wslpath", "-w", str(script)], capture_output=True, text=True,
+                              check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return str(script)
+
+
+WIN_PY = _win_python()
+RELAY = _relay_path()
 
 
 class Relay:
