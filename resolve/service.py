@@ -24,9 +24,12 @@ YES = {"yes", "yes please", "yes book it", "yes please book it", "yes, please bo
        "ok", "okay", "sure", "confirm", "yes that works", "that works", "sounds good"}
 
 class Resolve:
-    def __init__(self, store: Store, api: FieldDesk, model: Model | None, today: dt.date, horizon_days: int):
+    def __init__(self, store: Store, api: FieldDesk, model: Model | None, today: dt.date, horizon_days: int,
+                 interpret_fn=interpret, revise_fn=revise):
+        """`interpret_fn` / `revise_fn` default to the model; the rule-based baseline passes its own."""
         self.store, self.api, self.model = store, api, model
         self.today, self.horizon_days = today, horizon_days
+        self.interpret, self.revise = interpret_fn, revise_fn
 
     @property
     def last_day(self) -> dt.date:
@@ -52,7 +55,7 @@ class Resolve:
 
     async def _interpret(self, rid: str, facts: dict) -> dict:
         turns = await self.store.turns(rid)
-        out = await interpret(self.model, facts, turns)
+        out = await self.interpret(self.model, facts, turns)
         await self.store.event(rid, "interpret", attempts=out.attempts, problems=out.problems,
                                intent=out.value)
         if out.value is not None:
@@ -96,7 +99,7 @@ class Resolve:
                                                            "slot_id": question["candidates"][0]["slot_id"]}]},
                                         question)[0], [], 0)
         else:
-            out = await revise(self.model, facts, turns, current, req["question"], names)
+            out = await self.revise(self.model, facts, turns, current, req["question"], names)
         await self.store.event(request_id, "revise", attempts=out.attempts, problems=out.problems,
                                decision=out.decision, intent=out.value)
         if out.decision == "declined":

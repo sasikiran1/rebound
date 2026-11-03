@@ -59,6 +59,12 @@ def test_validator_rejects(bad, expect):
     assert any(expect in p for p in problems({"rules": [bad]})), problems({"rules": [bad]})
 
 
+def test_malformed_model_output_is_a_problem_not_a_crash():
+    # Llama 3.1 8B returned rules as strings; assigning ids before the schema check crashed the run
+    assert any("schema" in p for p in I.validate({"rules": ["after three"]}, FACTS, SAID))
+    assert any("schema" in p for p in I.validate(["not", "an", "object"], FACTS, SAID))
+
+
 def test_impossible_window_and_reference_grounding():
     window = {"rules": [rule("start_at_or_after", time="16:00"), rule("start_before", time="09:00")]}
     assert any("no start time" in p for p in problems(window))
