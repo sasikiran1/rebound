@@ -1,6 +1,8 @@
 # Limitations
 
 What Rebound's results do and do not support, as of 2026-10-28. Numbers are in `docs/results.md`.
+Later studies carry their own limitations: the Nov 1–2 probes in `policy_probe_results.md` and
+`goal_preservation_live_results.md`, and Resolve (Nov 3) in `resolve_results.md`.
 
 ## Scope
 
