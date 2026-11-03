@@ -1,18 +1,20 @@
 # Three-minute demo script
 
-Segments 2 and 5 are live; everything else is recorded data shown in the results page, and the narration says so.
+Two windows side by side: the Resolve screen (`http://127.0.0.1:8090/?rid=<run>:D1:resolve`) and a terminal. Segment 2
+is live on Muse (2 model calls, about $0.02, capped by the script); everything else is recorded data and the
+narration says so. Burn in a caption on every segment, because judges may watch muted: "synthetic data, scripted
+customer".
 
-Before recording: run `make sut-up`, open `ui/index.html` in a browser, and open a terminal in the repository.
-Segment 2 makes one live Muse call, about $0.01.
+Before recording: `make sut-up`; start the screen with `uv run uvicorn resolve.ui:app --port 8090`; open
+`docs/resolve_results.md` and `ui/index.html` in tabs.
 
 | Time | Segment | On screen | Words |
 |---|---|---|---|
-| 0:00–0:20 | The question | **Overview**, title and the four numbers | "AI agents now call APIs. When a database slows down, do they make recovery worse? Does an admission gate help, and what does it cost them? Rebound measures this on a real API with real agents." |
-| 0:20–0:50 | **Live:** one agent, one task | Terminal: `make goal TASK=A0001 CONTINUATION=full_history` | "A live Meta Muse Spark agent reschedules an appointment through seven tools. No model grades it. An SQL oracle reads the database and checks every condition." |
-| 0:50–1:20 | Recorded: recovery | **Recovery**, 20 s fault, then "Slowest 5% of requests", then "Ordinary users served" | "Eighteen trials, frozen before the first one ran. In a 20-second fault the API takes 34 seconds to recover alone, and 10 with the gate. Lost requests halve. Note that the low latency during the fault is refused requests, not service." |
-| 1:20–1:50 | Recorded: what agents do | **Agent behavior**, table, then the step-by-step goal | "The gate says retry after 2 seconds. The agents ignored that every time: 350 of 350. This goal was refused 13 times and ran out of tools. In the 20-second fault, agents lost 8 of 209 goals." |
-| 1:50–2:25 | Recorded: the fix | **Fixes**, table and the met and not-met marks | "So we fixed the agent. A runtime guard waits out Retry-After. Nothing went early, and no goal was lost: 209 of 209. We also show what missed: refusals fell less than the bar we set, the guard didn't speed recovery, and plain-language handling gained only one goal because Muse was already good at it." |
-| 2:25–2:40 | Recorded: the wrong booking | **Bookings**, the table | "In a separate local-model test, one model booked 8 a.m. for a customer who said 3 p.m. or later. The API returned 200 and the old oracle passed it. A start-time filter fixed 8 of 8 cases, and the oracle now checks stated constraints." |
-| 2:40–3:00 | **Live:** evidence can't be faked | Terminal: `scripts/tamper_demo.sh runs/eval-v1/tr_0004` (works on a copy) | "Every number re-derives from checksummed logs, with no model key. Change one word in a copy and verification refuses it. Limits: one API, one fault type, one laptop. Agents were a small share of load, so we don't claim they slow recovery." |
+| 0:00–0:15 | The problem | Split card: left "Agent: Done! You're booked. API: 200 OK" in green; right "Customer: 6 pm only. SQL: booked 10:00. INCORRECT" in red (recorded Muse run, plain-language study, MI04) | "An AI agent said done. The API said 200 OK. The customer had said 6 pm only. Only an independent database check noticed." |
+| 0:15–0:35 | What we measured | `ui/index.html`, agent-behavior table | "We ran real Muse Spark agents against a scheduling API while we slowed its database. They retried before Retry-After every single time. A runtime guard fixed it with no lost work. And our own thesis failed: at our traffic mix, agents did not measurably slow recovery. We report that." |
+| 0:35–2:05 | **Live:** Resolve | Terminal `scripts/resolve_demo_muse.sh demo-video`, screen beside it | "A customer writes: after three this week, Dana if possible, check with me before next week. Muse turns it into rules, each quoting her words. Now the database link slows down: the booking system times out, the request waits. Meanwhile someone takes Friday with Dana. The system recovers. Nothing she authorized is left, so it asks, offering only real open slots. She answers: Monday is okay, but not before four. Version 2 changes only that, and only for Monday. It asks her to confirm the exact slot. Now we kill the worker right after the booking is written. A new worker reclaims the job, resends with the same key, gets 'replayed', no second booking. The SQL check: one change, the slot she approved." |
+| 2:05–2:35 | Recorded: held-out results | `docs/resolve_results.md`, top table | "Twenty-four conversations frozen before any model saw them. Muse with grounding and questions: 23 correct, one unauthorized booking, about 23 cents. The same model in one shot: 15. A form filled in perfectly: 24, so the engineering is sound and the model's value is in history, corrections and asking first." |
+| 2:35–3:00 | Limits | One slide | "The miss: 'same time as my current booking' read as 'morning'. Confirm mode is the guard. A customer who taps a link should get a slot picker, not a chatbot. Synthetic data, one laptop, no rule-parser baseline yet, and no notifications. Every number is in the repo." |
 
-If the live goal stalls, say so and move on to the results page. Never present recorded data as live.
+If the live run stalls, say so and switch to the recorded run `runs/resolve/demo/demo-muse-1`. Never present recorded
+data as live.

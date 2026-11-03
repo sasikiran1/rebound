@@ -8,6 +8,8 @@
     request waits in `ready`. While it waits, another customer books the first choice.
  4. The outage ends. The worker finds no authorized slot and asks a grounded question (`needs_input`).
  5. The customer's scripted reply corrects the request; the patched intent is stored as version 2 (diff shown).
+    Product mode (default): the worker then asks "shall I book <slot>?" and the scripted customer says yes, so
+    nothing is booked that the customer did not see; `--no-confirm` skips this, as in the frozen evaluation.
  6. A worker process is killed right after its booking POST returns (before it records the answer).
  7. A second worker process reclaims the expired lease, reconciles with the same idempotency key and confirms the
     booking without a second write.
@@ -39,6 +41,7 @@ from resolve.service import Resolve
 from resolve.store import Store
 
 T0 = time.monotonic()
+CONFIRM_REPLY = "Yes, please book it."
 
 
 def say(step: str, text: str) -> None:
@@ -69,6 +72,8 @@ async def main() -> None:
     ap.add_argument("--run", default=None)
     ap.add_argument("--max-calls", type=int, default=6)
     ap.add_argument("--max-cost", type=float, default=0.25)
+    ap.add_argument("--no-confirm", dest="confirm", action="store_false",
+                    help="book authorized slots without the final yes (the frozen evaluation's setting)")
     a = ap.parse_args()
     run = a.run or f"demo-{dt.datetime.now():%Y%m%d-%H%M%S}"
     out = Path("runs/resolve/demo")
@@ -100,7 +105,8 @@ async def main() -> None:
 
         say("customer", case.messages[0])
         times.append(await now())
-        await svc.open(rid, case.customer_id, case.appointment_id, case.region, case.service, case.messages[0])
+        await svc.open(rid, case.customer_id, case.appointment_id, case.region, case.service, case.messages[0],
+                       confirm=a.confirm)
         req = await store.get(rid)
         v1 = await store.intent(rid, req["version"]) if req["version"] else None
         say("model", f"{len(model.log.calls)} call(s); state={req['state']} version={req['version']}")
@@ -137,6 +143,17 @@ async def main() -> None:
                 + (f" diff={res.get('diff')}" if res.get("diff") else ""))
             if req["version"] >= 2:
                 say(f"intent v{req['version']}", I.explain(await store.intent(rid, req["version"]), names))
+        if req["state"] == "ready" and a.confirm:
+            confirm = await worker_process(rid, max_s=30)
+            record["steps"].append({"step": "confirm_question", "worker": confirm})
+            req = await store.get(rid)
+            if req["state"] == "needs_input" and req["question"]["kind"] == "confirm":
+                say("assistant", req["question"]["text"])
+                say("customer", CONFIRM_REPLY + "   (scripted)")
+                times.append(await now())
+                await svc.customer_says(rid, CONFIRM_REPLY)
+                req = await store.get(rid)
+                say("approved", f"version {req['version']}: the customer approved that exact slot")
         (out / f"{run}.json").write_text(json.dumps({"request_id": rid, "case": case.id, "split": a.split,
                                                      "turn_times": [t.isoformat() for t in times]}))
         if req["state"] == "ready":
