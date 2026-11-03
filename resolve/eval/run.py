@@ -36,6 +36,8 @@ from resolve.store import TERMINAL, Store
 from resolve.worker import Worker
 
 GENERIC_REPLY = "I don't have anything to add to what I already said."
+CONFIRM_YES = "Yes, please book it."
+CONFIRM_NO = "No, that time doesn't work for me."
 
 
 def form_intent(case: C.Case, form: dict) -> dict:
@@ -72,7 +74,7 @@ async def db_now(conn: asyncpg.Connection) -> dt.datetime:
 
 
 async def run_case(case: C.Case, arm: str, model: Model | None, store: Store, admin: asyncpg.Connection,
-                   oracle: asyncpg.Connection, tag: str) -> dict:
+                   oracle: asyncpg.Connection, tag: str, confirm: bool = False) -> dict:
     rid = f"{tag}:{case.id}:{arm}"
     await C.seed(admin, case)
     await store.reset(rid)
@@ -107,7 +109,7 @@ async def run_case(case: C.Case, arm: str, model: Model | None, store: Store, ad
                 effort["customer_turns"] += 1
                 effort["customer_words"] += len(case.messages[0].split())
                 await svc.open(rid, case.customer_id, case.appointment_id, case.region, case.service,
-                               case.messages[0], facts)
+                               case.messages[0], facts, confirm=confirm)
                 for m in case.messages[1:]:
                     await say(m)
             elif arm == "oneshot":
@@ -157,6 +159,13 @@ async def run_case(case: C.Case, arm: str, model: Model | None, store: Store, ad
                     await store.set_state(rid, "unresolved", detail="one-shot arm cannot ask the customer")
                     record["notes"].append(f"would have asked: {req['question']['text']}")
                     break
+                if arm in ("resolve", "rules") and req["question"]["kind"] == "confirm":
+                    # Simulated customer: yes only to a slot they authorized (case file), otherwise no.
+                    alias = case.alias_of(req["question"]["candidates"][0]["slot_id"])
+                    ok = alias in {C.norm_key(k) for k in case.expected["authorized"][-1]}
+                    record.setdefault("confirm_answers", []).append({"slot": alias, "yes": ok})
+                    await say(CONFIRM_YES if ok else CONFIRM_NO)
+                    continue
                 if arm in ("resolve", "rules"):
                     await say(next(replies, GENERIC_REPLY))
                     continue
@@ -228,6 +237,8 @@ async def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-calls", type=int, default=None)
     ap.add_argument("--max-cost", type=float, default=None)
+    ap.add_argument("--confirm", action="store_true",
+                    help="product mode: every booking waits for the simulated customer's yes (resolve, rules arms)")
     a = ap.parse_args()
     path = Path(a.split) if a.split.endswith(".yaml") else C.CASE_DIR / f"{a.split}.yaml"
     cases = C.load(path)
@@ -247,7 +258,7 @@ async def main() -> None:
     records = []
     try:
         for case in cases:
-            rec = await run_case(case, a.arm, model, store, admin, oracle, tag)
+            rec = await run_case(case, a.arm, model, store, admin, oracle, tag, a.confirm)
             (out / f"{case.id}.{a.arm}.json").write_text(json.dumps(rec, indent=1, default=str, ensure_ascii=False))
             records.append(rec)
             v = rec["verdict"]
@@ -262,7 +273,8 @@ async def main() -> None:
         await oracle.close()
         if model is not None and hasattr(model.client, "close"):
             await model.client.close()
-    summary = {"split": str(path), "arm": a.arm, "model": None if a.arm in ("form", "rules") else a.model,
+    summary = {"split": str(path), "arm": a.arm, "confirm": a.confirm,
+               "model": None if a.arm in ("form", "rules") else a.model,
                "run": tag, "started_cases": [r["case"] for r in records], **summarize(records)}
     (out / f"summary.{a.arm}.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps(summary))

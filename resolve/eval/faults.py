@@ -244,6 +244,93 @@ async def check_confirm(env: Env) -> dict:
     return {"passed": ok, "first_pass": first, "changes_before_yes": before, "second_pass": second, "verdict": v}
 
 
+async def check_notifications(env: Env) -> dict:
+    """The confirmation question and the final outcome reach the customer by email; while the mail server refuses,
+    the message stays queued and is delivered on a later pass."""
+    from resolve.eval.mailsink import MailSink
+    from resolve.notify import Notifier
+    case, rid = await env.fresh("F2", "notifications")
+    sink = await MailSink().start("127.0.0.1", 2525)
+    try:
+        notifier = Notifier(env.store, "127.0.0.1", 2525)
+        times = await env.structured(case, rid, confirm=True)
+        w = Worker(env.store, env.api, owner="w-notify")
+        await w.run_once(rid)  # asks "shall I book it?": a notification is queued with the question
+        sink.refuse = True
+        refused = await notifier.drain()
+        queued = (await env.store.notifications(rid))[0]
+        sink.refuse = False
+        await asyncio.sleep(5.5)  # first retry is due 5 s after a failure
+        retried = await notifier.drain()
+        times.append(await env.now())
+        await Resolve(env.store, env.api, None, C.TODAY, C.HORIZON_DAYS).customer_says(rid, "Yes, please book it.")
+        await w.run_once(rid)
+        final = await notifier.drain()
+        rows = await env.store.notifications(rid)
+        v = await verdict(env.oracle, case, times)
+    finally:
+        await sink.stop()
+    # The notifier drains every due message, other requests' included (several checks share this fixture's
+    # customer); judge this request's own, by its Message-ID.
+    mine = [m for m in sink.messages if m["message_id"].startswith(f"<{rid.replace(':', '.')}.")]
+    subjects = [m["subject"] for m in mine]
+    ok = (queued["status"] == "pending" and queued["attempts"] == 1 and queued["last_error"]
+          and len(mine) == len(rows) == 2 and all(r["status"] == "sent" for r in rows)
+          and any("confirm" in s for s in subjects) and any("moved" in s for s in subjects)
+          and v["verdict"] == "correct")
+    return {"passed": ok, "refused_pass": refused, "queued_after_refusal": {k: queued[k] for k in (
+        "status", "attempts", "last_error")}, "retry_pass": retried, "final_pass": final,
+            "received": [{k: m[k] for k in ("to", "subject")} for m in mine], "verdict": v}
+
+
+async def _toxic(env: Env, kind: str, attributes: dict, name: str) -> None:
+    r = await env.tox.client.post(f"{env.tox.base}/proxies/pg/toxics", json={
+        "name": name, "type": kind, "stream": "downstream", "toxicity": 1.0, "attributes": attributes})
+    r.raise_for_status()
+
+
+async def _passes_until_done(w: Worker, env: Env, rid: str, n: int = 8) -> list[dict]:
+    out = []
+    for _ in range(n):
+        req = await env.store.get(rid)
+        if req["state"] != "ready" and not (req["state"] == "claimed"):
+            break
+        res = await w.run_once(rid)
+        out.append(res)
+        if res is None or res.get("result") == "retry_later":
+            await asyncio.sleep(1.5)
+    return out
+
+
+async def check_fault_shapes(env: Env) -> dict:
+    """Beyond latency: the database link is reset mid-write, or goes silent mid-search (Toxiproxy reset_peer and
+    timeout toxics). Either way the worker must end with exactly one correct change once the link is back."""
+    out = {}
+    for shape, kind, during in (("reset_during_write", "reset_peer", "write"),
+                                ("blackhole_during_search", "timeout", "search")):
+        case, rid = await env.fresh("F2", shape)
+        times = await env.structured(case, rid)
+        name = f"shape_{shape}"
+
+        async def on_write(req, slot, kind=kind, name=name):
+            await _toxic(env, kind, {"timeout": 0}, name)
+
+        w = Worker(env.store, env.api, owner=f"w-{shape}", lease_s=4,
+                   before_post=on_write if during == "write" else None)
+        if during == "search":
+            await _toxic(env, kind, {"timeout": 0}, name)
+        first = await w.run_once(rid)
+        mid = await env.store.get(rid)
+        await env.tox.remove("pg", name)
+        w.before_post = None
+        rest = await _passes_until_done(w, env, rid)
+        v = await verdict(env.oracle, case, times)
+        out[shape] = {"passed": first["result"] == "retry_later" and v["verdict"] == "correct" and v["changes"] == 1,
+                      "first_pass": first, "after_fault": {"state": mid["state"], "attempt": mid["attempt_state"]},
+                      "later_passes": rest, "verdict": v}
+    return {"passed": all(x["passed"] for x in out.values()), "shapes": out}
+
+
 INVALID = {
     "reversed_range": {"kind": "dates_between", "date_from": "2026-11-13", "date_to": "2026-11-11"},
     "not_a_date": {"kind": "on_dates", "dates": ["2026-11-31"]},
@@ -297,6 +384,8 @@ CHECKS = {
     "renewed_permission": check_renewed_permission,
     "correction_preserves": check_correction,
     "confirm_mode": check_confirm,
+    "notifications": check_notifications,
+    "fault_shapes": check_fault_shapes,
 }
 
 

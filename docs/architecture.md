@@ -48,6 +48,7 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | `resolve/service.py` | Conversation: open, customer turns, versioned approval, deterministic "yes" in confirm mode | gates every model output through validate |
 | `resolve/store.py` | Durable state machine, versions, turns, events, leases, in-flight attempt | n/a |
 | `resolve/worker.py` | Claims, reconciles, searches, decides, records the attempt, writes; crash points for tests | no model involved |
+| `resolve/notify.py` | Delivers queued customer messages over SMTP, with retry and backoff | no model involved |
 | `resolve/api.py` | FieldDesk client: one attempt per call, 3 s deadline, paging, call log | n/a |
 | `resolve/models.py` | Meta API or Ollama behind one `Model` with call and spend caps | n/a |
 | `resolve/app.py` | Screen, read APIs, health, metrics, intake | n/a |
@@ -87,25 +88,48 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | More than 50 open slots | Paged until `total_count` | `truncation` |
 | Model output invalid (dates, windows, technicians, quotes, schema) | One repair turn; still invalid: unresolved, no booking | `invalid_intent` |
 | Correction rewrites an unrelated rule | `replace_rule` must keep the kind; otherwise rejected and repaired | `correction_preserves` |
-| Model misreads but quotes real words | Not caught by the validator; confirm mode shows the exact slot before any write | held-out H15; `confirm_mode` |
+| Model misreads but quotes real words | Not caught by the validator; confirm mode shows the exact slot before any write | held-out H15; `confirm_mode`; held-out with confirm: 0 unauthorized |
+| Malformed model output (wrong types) | Schema check before anything else; a repair turn; never a crash | Llama 3.1 8B run; unit test |
+| Database link reset in the middle of the write | FieldDesk answers 500; the attempt stays uncertain; reconcile commits exactly once | `fault_shapes` |
+| Database link silent during the search | Timeout; request released; booked once the link is back | `fault_shapes` |
+| Mail server refuses or is down | The message stays queued with its error; retried with backoff (5 s, 10 s, ...); failed after 6 attempts | `notifications` |
 
 Guarantee, as tested: with one worker holding a request at a time and FieldDesk's idempotency-key table, every
 injected crash point ends with at most one applied change. This is not a general exactly-once claim.
 
 ## Deployment
 
-`docker compose -f docker/compose.yml --profile resolve up -d` adds two containers to the existing stack, from one
+`docker compose -f docker/compose.yml --profile resolve up -d` adds three containers to the existing stack, from one
 image (`docker/resolve.Dockerfile`, non-root user):
 
-- `resolve-worker`: `python -m resolve.worker` in service mode; claims any ready request; on SIGTERM finishes the
-  request in hand and exits 0.
+- `resolve-worker`: `python -m resolve.worker` in service mode; claims any ready request and delivers due customer
+  messages (`resolve/notify.py`); on SIGTERM finishes the request in hand and exits 0.
 - `resolve-service`: `uvicorn resolve.app:app`, published on `127.0.0.1:8091`; `/healthz` checks the store and
   FieldDesk.
+- `resolve-mail`: a local SMTP test inbox (`resolve/eval/mailsink.py`) that stores every message in
+  `var/mail/inbox.jsonl` and relays nothing. A real provider replaces it by configuration alone.
 
 Configuration (environment): `REBOUND_PG_HOST/PORT`, `FIELDDESK_DB`, `REBOUND_FIELDDESK_URL`, `MODEL_API_KEY`,
 `RESOLVE_MODEL` (default `muse-spark-1.3`), `RESOLVE_MAX_CALLS` / `RESOLVE_MAX_COST` (per-process caps, default 50 /
-$1.00), `RESOLVE_CONFIRM` (default `true`), `RESOLVE_TODAY` (fixture clock by default). Verified end to end over HTTP
-with `scripts/resolve_service_e2e.py`.
+$1.00), `RESOLVE_CONFIRM` (default `true`), `RESOLVE_TODAY` (fixture clock by default), `RESOLVE_SMTP_HOST/PORT`,
+`RESOLVE_SMTP_USER/PASSWORD` (STARTTLS when set), `RESOLVE_MAIL_FROM`. Verified end to end over HTTP with
+`scripts/resolve_service_e2e.py`: intake, worker container, confirmation email, yes, booking, "moved" email, SQL
+verdict.
+
+## Why a live stack, not mocks
+
+A mock answers what its author scripted. The checks here run against the real FieldDesk, PostgreSQL and Toxiproxy
+because the defects worth finding only exist there:
+
+- a resend racing an in-flight commit gets `same_slot` while it waits on the row lock (would have caused a double
+  booking; found by the lost-acknowledgment check);
+- a connection reset mid-transaction aborts the write, so the reconcile must commit fresh, not expect a replay;
+- the provider's stored-response race and `applied_at` preceding COMMIT (found in the study);
+- in the study, realistic load showed agents were under 2% of in-flight time, which disproved the headline
+  thesis; a mock built around that thesis would have confirmed it.
+
+The narrow behavioral claims (agents retry early) need no infrastructure, and the refusal probe measures them with a
+synthetic refusal instead. Each claim names the setup it needs.
 
 ## Security
 
@@ -126,4 +150,5 @@ Short records in [decisions/](decisions/):
 [0002 idempotency key per request and version](decisions/0002-idempotency-key.md),
 [0003 the model never sees availability](decisions/0003-model-without-availability.md),
 [0004 confirm before booking](decisions/0004-confirm-before-booking.md),
-[0005 retries in middleware, not a model tool](decisions/0005-retries-in-middleware.md).
+[0005 retries in middleware, not a model tool](decisions/0005-retries-in-middleware.md),
+[0006 notifications from a transactional queue](decisions/0006-notifications.md).

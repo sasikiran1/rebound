@@ -10,6 +10,7 @@ model-made booking at all, and why the assistant promised bookings it could not 
 (no model call) and approves that slot as a new version; anything else goes to the model as a change. Replies never
 promise a booking that does not exist.
 
-**Consequences.** One extra customer turn per booking. The 24 held-out cases were written and frozen without it, so
-it is not used there; it is demonstrated (demo, `confirm_mode` check, the HTTP end-to-end test) but its effect on the
-held-out error (H15) is argued, not measured.
+**Consequences.** One extra customer turn per booking. The headline held-out run did not use it. A separate held-out
+run with confirm mode and a simulated customer (yes only to a slot the case file says they authorized) gave 23/24
+with 0 unauthorized for Muse, and 20/24 with 0 for the rule parser: every unauthorized booking became a refused
+proposal. Real customers may approve without reading, so this measures the mechanism, not real vigilance.
