@@ -91,6 +91,9 @@ services:
     environment: &resolve-env
       RESOLVE_SMTP_HOST: ${RESOLVE_SMTP_HOST:-resolve-mail}
       RESOLVE_SMTP_PORT: ${RESOLVE_SMTP_PORT:-1025}
+      RESOLVE_CALDAV_URL: ${RESOLVE_CALDAV_URL:-http://resolve-calendar:5232/fielddesk/}
+      RESOLVE_CALDAV_USER: ${RESOLVE_CALDAV_USER:-fielddesk}
+      RESOLVE_CALDAV_PASSWORD: ${RESOLVE_CALDAV_PASSWORD:-local-only}
       REBOUND_PG_HOST: postgres
       REBOUND_PG_PORT: "5432"
       REBOUND_FIELDDESK_URL: http://fielddesk:8080
@@ -115,6 +118,21 @@ services:
     user: "0"  # writes to the bind-mounted var/mail
     volumes:
       - ../var/mail:/mail
+
+  # Technicians' calendars over CalDAV (Radicale). Booked appointments are mirrored here; any calendar client can
+  # subscribe to http://127.0.0.1:5232/fielddesk/tech-<id>/ (login fielddesk / RESOLVE_CALDAV_PASSWORD).
+  resolve-calendar:
+    profiles: ["resolve"]
+    image: rebound-resolve
+    command: ["python", "-m", "resolve.eval.calserver", "--host", "0.0.0.0", "--port", "5232",
+              "--folder", "/calendar"]
+    environment:
+      RESOLVE_CALDAV_PASSWORD: ${RESOLVE_CALDAV_PASSWORD:-local-only}
+    user: "0"  # writes to the bind-mounted var/calendar
+    ports:
+      - "127.0.0.1:5232:5232"
+    volumes:
+      - ../var/calendar:/calendar
 
   resolve-service:
     profiles: ["resolve"]

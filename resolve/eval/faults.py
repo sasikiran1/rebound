@@ -283,6 +283,65 @@ async def check_notifications(env: Env) -> dict:
             "received": [{k: m[k] for k in ("to", "subject")} for m in mine], "verdict": v}
 
 
+async def check_calendar(env: Env) -> dict:
+    """The booking appears in the assigned technician's CalDAV calendar (a real Radicale server). While the calendar
+    server is down the sync stays queued, the booking does not wait, and a later pass catches up; copies in the other
+    technicians' calendars are removed; a second pass changes nothing."""
+    import shutil
+    import tempfile
+
+    from resolve.calendar import CalDAV, CalendarSync, event_ics
+    from resolve.eval.calserver import USER, CalServer
+    case, rid = await env.fresh("F2", "calendar")
+    folder = Path(tempfile.mkdtemp(prefix="rebound-cal-"))
+    server = await CalServer(5298, folder).start()
+    caldav = CalDAV(server.url, USER, server.password)
+    sync = CalendarSync(env.store, env.api, caldav)
+    try:
+        times = await env.structured(case, rid)
+        techs = (await env.store.get(rid))["facts"]["technicians"]
+        ids = [t["technician_id"] for t in techs]
+        before = await env.api.appointment(case.appointment_id)
+        await sync.mirror(case.appointment_id, techs)  # the calendar shows the original time
+        for t in ids:  # stale copies elsewhere, as if an earlier sync had left them
+            if t != before["technician_id"]:
+                await caldav.ensure_calendar(t, str(t))
+                await caldav.put_event(t, case.appointment_id, event_ics(before, str(t), "stale", None))
+        await server.stop()
+        res = await Worker(env.store, env.api, owner="w-calendar").run_once(rid)  # books while the calendar is down
+        down = await sync.drain(request_id=rid)
+        queued = await env.store.calendar_sync(rid)
+        await server.start()
+        await asyncio.sleep(5.5)  # first retry is due 5 s after a failure
+        up = await sync.drain(request_id=rid)
+        again = await sync.drain(request_id=rid)
+        row = await env.store.calendar_sync(rid)
+        after = await env.api.appointment(case.appointment_id)
+        holders = {t: await caldav.events(t) for t in ids}
+        body = await caldav.get_event(after["technician_id"], case.appointment_id) or ""
+        times.append(await env.now())
+        v = await verdict(env.oracle, case, times)
+    finally:
+        await caldav.close()
+        await server.stop()
+        shutil.rmtree(folder, ignore_errors=True)
+    name = f"appointment-{case.appointment_id}.ics"
+    start = dt.datetime.fromisoformat(after["starts_at"])
+    ok = (res["result"] == "completed" and down == {"synced": 0, "retry": 1, "failed": 0}
+          and queued["status"] == "pending" and queued["attempts"] == 1 and bool(queued["last_error"])
+          and up["synced"] == 1 and again == {"synced": 0, "retry": 0, "failed": 0} and row["status"] == "synced"
+          and all((name in files) == (t == after["technician_id"]) for t, files in holders.items())
+          and f"DTSTART:{start:%Y%m%dT%H%M%S}" in body and after["slot_id"] != before["slot_id"]
+          and v["verdict"] == "correct")
+    return {"passed": ok, "before": {k: before[k] for k in ("slot_id", "starts_at", "technician_id")},
+            "after": {k: after[k] for k in ("slot_id", "starts_at", "technician_id")},
+            "moved_technician": after["technician_id"] != before["technician_id"], "worker": res["result"],
+            "calendar_down_pass": down, "queued_while_down": {k: queued[k] for k in ("status", "attempts",
+                                                                                    "last_error")},
+            "calendar_up_pass": up, "second_pass": again, "event_url": row["event_url"],
+            "calendars": holders, "verdict": v}
+
+
 async def _toxic(env: Env, kind: str, attributes: dict, name: str) -> None:
     r = await env.tox.client.post(f"{env.tox.base}/proxies/pg/toxics", json={
         "name": name, "type": kind, "stream": "downstream", "toxicity": 1.0, "attributes": attributes})
@@ -386,6 +445,7 @@ CHECKS = {
     "confirm_mode": check_confirm,
     "notifications": check_notifications,
     "fault_shapes": check_fault_shapes,
+    "calendar": check_calendar,
 }
 
 

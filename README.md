@@ -22,7 +22,7 @@ An agent says "Done!", the API returns 200 OK, and the booking is wrong: Muse Sp
 | Same model, one-shot extraction, no history, no questions | 15/24, 2 unauthorized: the gap is in history references, corrections and renewed permission |
 | Capable form with correct entries (same execution path) | 24/24: when the intent is right, the deterministic path makes no errors |
 | Llama 3.1 8B in the same pipeline (local) | 10/24, 2 unauthorized: weaker, but mostly refuses rather than books wrong once code holds it to a schema |
-| Recovery checks on the live stack | 11/11: paging past 50 results, 7 invalid-intent kinds, crashes at 3 points, a real lost acknowledgment, connection reset mid-write, silent link mid-search, renewed permission, correction preserved, confirm-before-booking, email delivery with retry |
+| Recovery checks on the live stack | 12/12: paging past 50 results, 7 invalid-intent kinds, crashes at 3 points, a real lost acknowledgment, connection reset mid-write, silent link mid-search, renewed permission, correction preserved, confirm-before-booking, email delivery with retry, calendar sync through a calendar-server outage |
 
 The pass mark I set for Resolve before the run was at least 22/24 and zero unauthorized bookings. Without confirmation the first part is met and the second is not (H15, "same time of day as my current booking", was read as "morning"); with confirmation both are met, with a simulated customer who always reads the proposal. Details: [`docs/resolve_results.md`](docs/resolve_results.md).
 
@@ -38,7 +38,8 @@ customer text --> model (Muse): typed intent, each rule quoting the customer's w
               --> independent SQL oracle vs. hand-written expected outcomes
 ```
 
-The model never sees availability, so it cannot invent slots; it never books, so it cannot book without authority. A correction is applied as explicit operations on the stored intent, so untouched constraints survive by construction. In product mode the customer confirms the exact slot before anything is written, and every question and outcome is emailed to the customer (SMTP; locally to a test inbox) from a queue written in the same transaction. Design, failure handling and security: [`docs/architecture.md`](docs/architecture.md) and the [decision records](docs/decisions/).
+The model never sees availability, so it cannot invent slots; it never books, so it cannot book without authority. A correction is applied as explicit operations on the stored intent, so untouched constraints survive by construction. In product mode the customer confirms the exact slot before anything is written, and every question and outcome is emailed to the customer (SMTP; locally to a test inbox) from a queue written in the same transaction. Each booking is mirrored into the assigned technician's calendar over
+CalDAV (locally a Radicale server any calendar app can subscribe to). Design, failure handling and security: [`docs/architecture.md`](docs/architecture.md) and the [decision records](docs/decisions/).
 
 ```bash
 make sut-up && make seed      # stack and template data (see Quick start)
@@ -65,7 +66,7 @@ uv run python scripts/resolve_service_e2e.py   # intake over HTTP -> worker -> c
 - Llama 3.1 8B via Ollama completed 0 of 24 goal-preservation tasks through raw tool use; inside Resolve's validated pipeline it reached 10/24. Its first run crashed Resolve with malformed output (now handled).
 - Locally (qwen3-14b) Resolve scored 16/24 with 2 unauthorized bookings; the first prompt made 3 unauthorized bookings in 6 dev cases.
 - A hand-written rule parser came within 3 cases of Muse, on 24 conversations I wrote myself, which favors the parser.
-- No real users, no real email provider (local test inbox), no data on how often customers write requests instead of picking a slot. See the limitations in [`docs/resolve_results.md`](docs/resolve_results.md).
+- No real users, no real email provider (local test inbox), no hosted calendar provider (local CalDAV server), no data on how often customers write requests instead of picking a slot. See the limitations in [`docs/resolve_results.md`](docs/resolve_results.md).
 
 ## The study: what it does
 

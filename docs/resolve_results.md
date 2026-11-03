@@ -134,9 +134,14 @@ holds it to a schema: most of its failures are refusals to book, not wrong booki
 | dev-r4 | qwen2.5-14b / gemma4-12b, v2 | 2/6 / 3/6 | 2 / 1 |
 | muse-dev | Muse Spark 1.3, v2 | 6/6 | 0 |
 
-## Recovery checks (live stack, `runs/resolve/faults/faults-r5`)
+## Recovery checks (live stack, `runs/resolve/faults/faults-r6`)
 
-**11 of 11 pass.** Runs 4 and 5 add two checks (run 4 failed the new notification check on a test bug: it counted
+**12 of 12 pass.** Run 6 adds **calendar sync**: a real CalDAV server (Radicale) holds the technicians' calendars;
+the original appointment is mirrored first and stale copies are planted in the other technicians' calendars; the
+server is stopped, the worker books (the booking does not wait), the sync stays queued with its connection error,
+and after restart one pass puts the event in the new technician's calendar at the booked time and removes the
+copies; a second pass changes nothing. In that run the booking moved to another technician, so the removal path was
+exercised. The other 11 checks passed unchanged. Runs 4 and 5 add two checks (run 4 failed the new notification check on a test bug: it counted
 other checks' emails to the same fixture customer; it now matches messages by Message-ID). **Notifications:** the confirmation question and the outcome reach the
 customer by SMTP; while the mail server refuses (421), the message stays queued with its error and is delivered on
 the next attempt. **Fault shapes beyond latency:** the database link reset in the middle of the write (FieldDesk

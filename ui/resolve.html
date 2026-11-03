@@ -86,6 +86,7 @@ td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line
   <section>
     <h2>Real alternatives</h2><div id="alts"></div>
     <h2 style="margin-top:16px">Messages to the customer</h2><div id="mail"></div>
+    <h2 style="margin-top:16px">Technician calendar (CalDAV)</h2><div id="cal"></div>
     <h2 style="margin-top:16px">Activity</h2><div id="activity"></div>
   </section>
   <section class="sql"><h2>Independent SQL check</h2><div id="sql"></div></section>
@@ -153,6 +154,15 @@ function render(r) {
     <b>${esc(n.subject)}</b> to ${esc(n.to)} · <span class="chip ${n.status === "sent" ? "prefer" : "must"}">${esc(n.status)}</span>
     ${n.error ? `<span class="q"> (${esc(n.error)}, attempt ${n.attempts})</span>` : ""}</div>`).join("")
     || `<p class="empty">No messages yet.</p>`;
+  const cal = r.calendar || {};
+  const day = s => new Date(s).toLocaleString("en-US", {weekday: "short", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false});
+  $("cal").innerHTML = cal.configured === false ? `<p class="empty">No calendar configured.</p>`
+    : cal.unreachable ? `<p class="empty">Calendar server unreachable (${esc(cal.unreachable)}).</p>`
+    : ((cal.held_by || []).map(h => `<div class="event"><b>${esc(h.technician)}</b>'s calendar: ${esc(day(h.starts_at))}</div>`).join("")
+       || `<p class="empty">Not in any technician's calendar.</p>`)
+      + (cal.status ? `<p class="note">Sync <span class="chip ${cal.status === "synced" ? "prefer" : "must"}">${esc(cal.status)}</span>`
+         + (cal.error ? ` (${esc(cal.error)}, attempt ${cal.attempts})` : "") + `</p>` : "");
   $("activity").innerHTML = r.events.map(e =>
     `<div class="event"><time>${hhmm(e.at)}</time>${activity(e)}</div>`).join("") || `<p class="empty">No activity.</p>`;
   const s = r.sql;
