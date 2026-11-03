@@ -1,0 +1,133 @@
+# Development cases. Prompt tuning may look at these. See README.md for the format.
+
+- id: D1
+  kind: permission
+  title: First choice taken during the outage; next week needs permission; reply corrects the time
+  customer: Maya Chen
+  technicians: {dana: Dana Okafor, alex: Alex Rivera}
+  history: [{date: 2026-10-06, time: "10:00", tech: dana}]
+  current: tue 09:00 alex
+  open: [fri 15:30 dana, fri 10:00 alex, mon2 15:00 alex, mon2 16:30 alex, mon2 09:00 dana, wed 11:00 dana]
+  taken: [fri 15:30 dana]
+  messages:
+    - "I need someone after three this week. Dana if possible. Don't push it into next week without checking with me."
+  replies:
+    - "Monday is okay, but not before four."
+  expected:
+    authorized: [[fri 15:30 dana], [fri 15:30 dana, mon2 16:30 alex]]
+    final: [mon2 16:30 alex]
+    questions: 1
+  form:
+    rules:
+      - {kind: dates_between, date_from: 2026-11-10, date_to: 2026-11-13}
+      - {kind: start_at_or_after, time: "15:00"}
+      - {kind: technician_is, technician_ids: [dana], strength: prefer}
+  form_turns:
+    - rules:
+        - {kind: dates_between, date_from: 2026-11-10, date_to: 2026-11-16}
+        - {kind: start_at_or_after, time: "15:00"}
+        - {kind: start_at_or_after, time: "16:00", only_on_dates: [2026-11-16]}
+        - {kind: technician_is, technician_ids: [dana], strength: prefer}
+
+- id: D2
+  kind: standard
+  title: Plain day and time window; no question needed
+  customer: Noah Fischer
+  technicians: {kai: Kai Nakamura, lena: Lena Vogel}
+  current: tue 13:00 kai
+  open: [thu 09:00 kai, thu 11:30 lena, thu 13:00 kai, wed 10:00 kai]
+  messages:
+    - "Can you move my visit to Thursday morning? Any time before noon works."
+  expected:
+    authorized: [[thu 09:00 kai, thu 11:30 lena]]
+    final: [thu 09:00 kai, thu 11:30 lena]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-12]}
+      - {kind: start_before, time: "12:00"}
+
+- id: D3
+  kind: conditional
+  title: First alternative unavailable; fall back to the second without asking
+  customer: Aisha Bello
+  technicians: {sam: Sam Turner, lee: Lee Morgan}
+  current: tue 10:00 lee
+  open: [wed 10:00 sam, wed 14:00 lee, thu 09:30 lee, thu 14:00 sam, fri 14:00 sam]
+  messages:
+    - "I'd like Wednesday afternoon with Sam. If Sam can't do Wednesday afternoon, then Thursday morning with anyone is fine."
+  expected:
+    authorized: [[thu 09:30 lee]]
+    final: [thu 09:30 lee]
+    questions: 0
+  form:
+    rules: []
+    alternatives:
+      - label: Wednesday afternoon with Sam
+        rules:
+          - {kind: on_dates, dates: [2026-11-11]}
+          - {kind: start_at_or_after, time: "12:00"}
+          - {kind: technician_is, technician_ids: [sam]}
+      - label: Thursday morning, anyone
+        rules:
+          - {kind: on_dates, dates: [2026-11-12]}
+          - {kind: start_before, time: "12:00"}
+
+- id: D4
+  kind: reference
+  title: Same technician as last time, grounded in booking history
+  customer: Lucas Moreau
+  technicians: {priya: Priya Raman, omar: Omar Haddad}
+  history: [{date: 2026-09-01, time: "11:00", tech: omar}, {date: 2026-10-20, time: "14:00", tech: priya}]
+  current: tue 09:00 omar
+  open: [mon2 10:00 omar, tue2 14:00 priya, wed2 09:00 priya, thu 10:00 priya]
+  messages:
+    - "Please book the same technician as last time, any day next week."
+  expected:
+    authorized: [[tue2 14:00 priya, wed2 09:00 priya]]
+    final: [tue2 14:00 priya, wed2 09:00 priya]
+    questions: 0
+  form:
+    rules:
+      - {kind: dates_between, date_from: 2026-11-16, date_to: 2026-11-20}
+      - {kind: technician_is, technician_ids: [priya]}
+
+- id: D5
+  kind: correction
+  title: Unprompted correction narrows the time and keeps the day
+  customer: Grace Liu
+  technicians: {gus: Gus Andersen, ida: Ida Kowal}
+  current: tue 11:00 gus
+  open: [fri 09:00 gus, fri 14:30 ida, fri 16:00 gus, thu 15:00 gus]
+  messages:
+    - "Friday works for me, any time."
+    - "Actually, make that Friday after 2pm. I have a meeting in the morning."
+  expected:
+    authorized: [[fri 09:00 gus, fri 14:30 ida, fri 16:00 gus], [fri 14:30 ida, fri 16:00 gus]]
+    final: [fri 14:30 ida, fri 16:00 gus]
+    questions: 0
+  form:
+    rules:
+      - {kind: on_dates, dates: [2026-11-13]}
+  form_turns:
+    - rules:
+        - {kind: on_dates, dates: [2026-11-13]}
+        - {kind: start_at_or_after, time: "14:00"}
+
+- id: D6
+  kind: unresolved
+  title: Two technicians share the name; the customer cannot say which
+  customer: Ethan Brooks
+  technicians: {jordanp: Jordan Pike, jordanw: Jordan Wu, tess: Tess Moyo}
+  history: [{date: 2026-10-12, time: "10:00", tech: tess}]
+  current: tue 08:30 tess
+  open: [wed 10:00 jordanp, thu 13:00 jordanw, fri 09:00 tess]
+  messages:
+    - "Move it to whenever Jordan is free this week."
+  replies:
+    - "I'm not sure which Jordan. I'll check with my neighbour and call you back."
+  expected:
+    authorized: [[], []]
+    final: []
+    questions: 1
+  form: null

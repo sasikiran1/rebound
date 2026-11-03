@@ -130,6 +130,51 @@ async def customer_appointments(customer_id: int):
     }
 
 
+@app.get("/customers/{customer_id}/context")
+async def customer_context(customer_id: int):
+    """Grounding read for the Resolve assistant: every appointment of the customer (any status, oldest first) with
+    service and technician names, and the technicians covering the customer's region, by name."""
+    async with db.acquire() as conn:
+        customer = await conn.fetchrow(
+            "SELECT c.id, c.name, c.region_id, r.code AS region FROM customers c JOIN regions r ON r.id = c.region_id "
+            "WHERE c.id = $1",
+            customer_id,
+        )
+        if customer is None:
+            raise ApiError(404, "not_found", f"customer {customer_id} not found")
+        rows = await conn.fetch(
+            """
+            SELECT a.id, a.status, st.code AS service, st.name AS service_name, s.slot_date, s.starts_at,
+                   s.technician_id, t.name AS technician_name
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id
+            JOIN technicians t ON t.id = s.technician_id
+            JOIN service_types st ON st.id = a.service_type_id
+            WHERE a.customer_id = $1
+            ORDER BY s.starts_at, a.id
+            """,
+            customer_id,
+        )
+        techs = await conn.fetch(
+            "SELECT t.id, t.name FROM technicians t JOIN technician_regions tr ON tr.technician_id = t.id "
+            "WHERE tr.region_id = $1 ORDER BY t.id",
+            customer["region_id"],
+        )
+    return {
+        "customer_id": customer_id,
+        "name": customer["name"],
+        "region": customer["region"],
+        "appointments": [
+            {"appointment_id": r["id"], "status": r["status"], "service": r["service"],
+             "service_name": r["service_name"], "date": r["slot_date"].isoformat(),
+             "starts_at": r["starts_at"].isoformat(timespec="minutes"), "technician_id": r["technician_id"],
+             "technician_name": r["technician_name"]}
+            for r in rows
+        ],
+        "technicians": [{"technician_id": t["id"], "name": t["name"]} for t in techs],
+    }
+
+
 @app.get("/appointments/{appointment_id}")
 async def get_appointment(appointment_id: int):
     async with db.acquire() as conn:
