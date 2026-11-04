@@ -34,19 +34,22 @@ SPLITS = ("dev", "heldout", "faults")
 # does besides sending the case file's lines: faults to inject, and the customer's correction when a proposed slot is
 # not one the case file authorizes (a customer says no to the wrong slot; Play never says yes to it).
 PRESETS = [
-    {"case": "D1", "title": "A: ambiguous request + outage + slot taken + worker crash",
-     "how": "Play: outage on, the message, another customer takes Fri 15:30 Dana while it waits, outage off; it asks "
-            "before next week, gets the answer, proposes, and the worker is killed right after the booking write.",
-     "plan": {"outage": True, "take": True, "crash": True, "correction": None}},
-    {"case": "H10", "title": "B: negation (\"Anyone but Victor\")",
-     "how": "Play sends the message; Resolve proposes and the customer confirms or corrects.",
-     "plan": {"outage": False, "take": False, "crash": False,
-              "correction": "No, not Victor. Anyone else, Thursday or Friday."}},
-    {"case": "H15", "title": "C: reference (\"same time of day as my current booking\")",
-     "how": "Play sends the message; if Resolve proposes the wrong time, the customer corrects it, then confirms "
-            "during a database outage.",
+    {"case": "H15", "title": "1 · \"Same time as my current booking\" (vague reference)",
+     "means": "Kwame means: Friday at 10:30, the same time as now; any technician.",
+     "how": "Play sends the message; if the proposed time is wrong the customer says no, then says yes while the "
+            "booking system is down.",
      "plan": {"outage": False, "take": False, "crash": False, "outage_on_confirm": True,
               "correction": "No, keep 10:30 like my current booking. Any technician is fine."}},
+    {"case": "D1", "title": "2 · Messy request + system down + slot taken + crash",
+     "means": "Maya means: after 3 pm this week, Dana if possible; next week only if asked first.",
+     "how": "Play: the booking system goes down, the message, someone else takes Fri 15:30 with Dana while it "
+            "waits, the system comes back; it asks, gets the answer, proposes, and crashes right after booking.",
+     "plan": {"outage": True, "take": True, "crash": True, "correction": None}},
+    {"case": "H10", "title": "3 · \"Anyone but Victor\" (negation)",
+     "means": "George means: any technician except Victor, on Thursday or Friday.",
+     "how": "Play sends the message; the customer confirms the proposal, or corrects it.",
+     "plan": {"outage": False, "take": False, "crash": False,
+              "correction": "No, not Victor. Anyone else, Thursday or Friday."}},
 ]
 live: dict = {}
 
@@ -59,7 +62,7 @@ async def lifespan(app):
             cases[c.id] = (split, c)
     live["cases"] = cases
     async with A.lifespan(app):  # the Resolve screen's reads (request detail, calendar, SQL verdict)
-        session = Live(cases["D1"][1], os.environ.get("RESOLVE_LIVE_MODEL", "qwen3-14b-16k:latest"),
+        session = Live(cases["H15"][1], os.environ.get("RESOLVE_LIVE_MODEL", "qwen3-14b-16k:latest"),
                        int(os.environ.get("RESOLVE_LIVE_MAX_CALLS", "40")),
                        float(os.environ.get("RESOLVE_LIVE_MAX_COST", "0.50")), echo=False)
         async with session:
@@ -209,7 +212,15 @@ async def world(x: Live) -> dict:
             "graded": {"authorized": auth, "final": [slot_label(case, k) for k in case.expected["final"]],
                        "authorized_ids": [[case.slot_id(k) for k in stage] for stage in case.expected["authorized"]]},
             "plan": next((p["plan"] for p in PRESETS if p["case"] == case.id),
-                         {"outage": False, "take": False, "crash": False, "correction": None})}
+                         {"outage": False, "take": False, "crash": False, "correction": None}),
+            "means": next((p["means"] for p in PRESETS if p["case"] == case.id), None),
+            "current": current_label(case)}
+
+
+def current_label(case: C.Case) -> str:
+    date, time, tech = C.parse_slot(case.raw["current"])
+    d = dt.date.fromisoformat(date)
+    return f"{d:%a %b} {d.day} {time} with {case.techs[tech]['name']}"
 
 
 @app.get("/api/live/state")
@@ -221,4 +232,5 @@ async def state():
     return {"session": {"lane": x.lane, "request_id": x.rid, "outage": x.outage, "busy": x.busy,
                         "crash_armed": x.crash_next, "model": x.model_name, "model_calls": len(x.model.log.calls),
                         "model_cost_usd": round(x.model.log.cost, 4)},
-            "feed": x.feed[-150:], "world": await world(x), "request": req}
+            "feed": x.feed[-150:], "world": await world(x), "request": req,
+            "results": x.results.get(x.case.id, {})}

@@ -81,7 +81,9 @@ class Live:
         self.texts: list[str] = []
         self.busy = False  # a customer message is being interpreted
         self.crash_next = False  # the next booking runs in a worker process that dies right after its POST
+        self.crashed = False
         self.waiting_lease = False
+        self.results: dict[str, dict] = {}  # case id -> lane -> the last finished run's outcome (for the screen)
         self.use_case(case)
 
     def use_case(self, case: C.Case) -> None:
@@ -160,7 +162,7 @@ class Live:
         await self.store.reset(rid)
         self.facts = await self.svc.load_facts(self.case.customer_id, self.case.appointment_id)
         self.seen_turns, self.reported, self.t_open, self.texts = 0, True, None, []
-        self.crash_next = self.waiting_lease = False
+        self.crash_next = self.waiting_lease = self.crashed = False
         self.rid = rid
         title = ("NAIVE AGENT: same model, one shot, books at once, never asks" if lane == "naive" else
                  "RESOLVE: grounded rules, asks when unsure, confirms the exact slot before writing")
@@ -304,7 +306,7 @@ class Live:
         stdout, _ = await proc.communicate()
         lines = [json.loads(x) for x in stdout.decode().splitlines() if x.strip().startswith("{")]
         if proc.returncode == 86:
-            self.crash_next = False
+            self.crash_next, self.crashed = False, True
             req = await self.store.get(rid)
             async with self.oracle.acquire() as c:
                 n = await c.fetchval("SELECT count(*) FROM appointment_changes WHERE appointment_id = $1",
@@ -330,6 +332,12 @@ class Live:
         text = {"correct": "CORRECT", "correct_no_booking": "CORRECT (no booking)", "unauthorized": "UNAUTHORIZED",
                 "wrong_slot": "WRONG SLOT", "missed_booking": "NOTHING BOOKED",
                 "duplicate_effect": "DOUBLE BOOKING"}[v["verdict"]]
+        req = await self.store.get(self.rid)
+        retries = await self.store.pool.fetchval("SELECT count(*) FROM resolve.events WHERE request_id = $1 AND "
+                                                 "kind = 'worker.retry_later'", self.rid)
+        self.results.setdefault(self.case.id, {})[self.lane] = {
+            "verdict": v["verdict"], "final": final if v["changes"] else None, "questions": req["questions_asked"],
+            "retries": retries, "crash": self.crashed, "request_id": self.rid}
         why = ("the customer never authorized that slot" if v["unauthorized"] else
                f"{v['changes']} change row(s)" + (", the slot the customer wanted" if good and v["changes"] else ""))
         self.out("SQL check", f"{BOLD}{text}{OFF}{GREEN if good else RED}: appointment is {final}; {why}",

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Resolve Live Flow</title>
+<title>Rebound Live Demo</title>
 <style>
 :root {
   --bg: #f4f4f1; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6a66; --line: #e2e0da; --chip: #eeede8;
@@ -165,6 +165,36 @@ td, th { text-align: left; padding: 2px 4px; border-bottom: 1px solid var(--line
 th { color: var(--muted); font-weight: 500; }
 .graded { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .graded b { color: var(--ink); font-weight: 600; }
+.brand { display: flex; flex-direction: column; margin-right: 6px; }
+.brand h1 { font-size: 22px; letter-spacing: .01em; }
+.tagline { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.play { font-weight: 600; }
+.play.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.help { width: 32px; height: 32px; border-radius: 50%; padding: 0; font-weight: 700; }
+.story { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; padding: 10px 16px 0; }
+.now { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--muted); border-radius: 10px; padding: 10px 14px; font-size: 17px; line-height: 1.35; display: flex; flex-direction: column; justify-content: center; }
+.now small { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.now.good { border-left-color: var(--ok); } .now.bad { border-left-color: var(--bad); } .now.warn { border-left-color: var(--warn); } .now.info { border-left-color: var(--accent); }
+.now .lbl2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 2px; }
+.score { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.res { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; font-size: 13px; }
+.res .h { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 3px; }
+.res .v { font-weight: 700; font-size: 14.5px; }
+.res .x { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.res.good { border-color: var(--ok); background: var(--ok-bg); } .res.good .v { color: var(--ok); }
+.res.bad { border-color: var(--bad); background: var(--bad-bg); } .res.bad .v { color: var(--bad); }
+.res.key .v { color: var(--ink); }
+.rb { display: inline-block; font-size: 9.5px; font-weight: 800; letter-spacing: .06em; padding: 1px 5px; border-radius: 4px; background: var(--ok); color: #fff; vertical-align: 1px; margin-left: 5px; }
+.node.skip .rb { background: var(--muted); }
+.node .tech { display: block; font-size: 10.5px; color: var(--muted); opacity: .8; margin-top: 1px; font-family: var(--mono); }
+.intro { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+.intro[hidden] { display: none; }
+.introcard { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px; max-width: 720px; font-size: 15px; line-height: 1.5; max-height: 90vh; overflow: auto; }
+.introcard h2 { margin: 0 0 10px; font-size: 22px; }
+.introcard ol { margin: 4px 0 10px; padding-left: 22px; }
+.introcard .fine { font-size: 12.5px; color: var(--muted); }
+@media (max-width: 1250px) { .story { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .score { grid-template-columns: minmax(0, 1fr); } .tagline { white-space: normal; } }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 90vw; }
 .toast.show { opacity: 1; }
 
@@ -184,23 +214,42 @@ th { color: var(--muted); font-weight: 500; }
 </head>
 <body>
 <header>
-  <h1>Resolve · live flow</h1>
+  <div class="brand"><h1>Rebound</h1><span class="tagline">stops AI agents from booking the wrong thing</span></div>
   <div class="group"><span class="lbl">Scenario</span><select id="case"></select></div>
-  <div class="group"><span class="lbl">Agent</span>
-    <button class="lane-naive" id="naive" title="Re-seeds the world. Same model, one shot: no booking history, no repair, never asks, books at once">Naive agent</button>
-    <button class="lane-resolve" id="resolve" title="Re-seeds the world. Grounded rules with quotes, asks when unsure, confirms the exact slot before writing">Resolve</button>
+  <div class="group"><span class="lbl">Run it</span>
+    <button class="lane-naive" id="naive" title="A plain AI agent: reads the message once and books immediately. Same AI model, no Rebound.">✗ Without Rebound</button>
+    <button class="lane-resolve" id="resolve" title="The same AI model with Rebound between it and the booking system.">✓ With Rebound</button>
+    <button id="play" class="play" title="Plays the scenario: the customer's messages and the problems (system down, slot taken, crash)">▶ Play scenario</button>
   </div>
-  <div class="group"><span class="lbl">Faults</span>
-    <button class="chaos" id="outage" title="Toxiproxy: 5 s latency on FieldDesk's database link">DB outage</button>
-    <button class="chaos" id="take" title="Another customer books the case's contested slot">Slot taken</button>
-    <button class="chaos crash" id="crash" title="The next booking runs in a worker process that dies right after its booking POST returns">Kill worker after write</button>
+  <div class="group"><span class="lbl">Cause trouble</span>
+    <button class="chaos" id="outage" title="Makes the booking system's database very slow (5 s), so its API times out (Toxiproxy)">Booking system down</button>
+    <button class="chaos" id="take" title="Another customer books the slot this customer wanted">Someone takes the slot</button>
+    <button class="chaos crash" id="crash" title="The next booking runs in a worker process that dies right after the booking is written">Crash after booking</button>
   </div>
-  <div class="group"><span class="lbl">Customer</span>
-    <button id="play" title="Sends the case file's lines: the message, then each reply when asked, and yes to a confirmation">Play script</button>
-  </div>
+  <button id="help" class="help" title="What is Rebound?">?</button>
   <div class="meta" id="meta"></div>
 </header>
-<div class="caption" id="caption">Synthetic data. Everything below is read live from the request store, FieldDesk's database, the CalDAV calendars and the SQL oracle.</div>
+<section class="story">
+  <div class="now" id="now"></div>
+  <div class="score" id="score"></div>
+</section>
+<div class="intro" id="intro" hidden>
+  <div class="introcard">
+    <h2>What is Rebound?</h2>
+    <p><b>The problem.</b> AI agents now take real actions, like rebooking a customer's appointment. Customers write vaguely ("same time as my current booking"), and systems go down. A plain AI agent guesses, books anyway and says "Done!". The booking system answers "200 OK". Nobody notices it was wrong until the customer does.</p>
+    <p><b>What Rebound does.</b> It sits between the AI and the booking system. The AI only <i>proposes</i>. Rebound:</p>
+    <ol>
+      <li>checks every rule the AI read against the customer's exact words,</li>
+      <li>asks the customer before booking anything they did not clearly allow,</li>
+      <li>waits safely when the booking system is down instead of guessing,</li>
+      <li>recovers from a crash without booking twice,</li>
+      <li>and an independent database check grades the final booking.</li>
+    </ol>
+    <p><b>How to watch this demo.</b> Pick a scenario. Run it <b>✗ Without Rebound</b> (the same AI model, booking directly), then <b>✓ With Rebound</b>. The bar at the top says what is happening in plain words; the scoreboard compares the two runs against what the customer actually wanted.</p>
+    <p class="fine">Synthetic customers and data; the AI model, booking system, outage, crash, calendars and database check are real and running live.</p>
+    <button id="introok" class="lane-resolve on">Got it</button>
+  </div>
+</div>
 <main>
   <section class="col">
     <div class="card grow" style="flex: 1.4">
@@ -213,19 +262,19 @@ th { color: var(--muted); font-weight: 500; }
       <div class="chips" id="chips"></div>
     </div>
     <div class="card grow">
-      <h2><span>What the agent understood</span><span id="vers"></span></h2>
+      <h2><span>What the AI understood</span><span id="vers"></span></h2>
       <div class="scroll grow" id="rules"></div>
     </div>
   </section>
   <section class="col">
     <div class="card grow">
-      <h2><span>Pipeline</span><span id="lanelbl"></span></h2>
+      <h2><span>What happened, step by step</span><span id="lanelbl"></span></h2>
       <div class="scroll grow"><div class="pipe" id="pipe"></div></div>
     </div>
   </section>
   <section class="col">
     <div class="card grow">
-      <h2><span>Technicians' schedule</span><span id="calsub"></span></h2>
+      <h2><span>Technicians' calendars</span><span id="calsub"></span></h2>
       <div class="calwrap" id="cal"></div>
       <div class="legend">
         <span class="l-cur">current appointment</span><span class="l-open">open</span><span class="l-other">taken by another customer</span>
@@ -236,14 +285,14 @@ th { color: var(--muted); font-weight: 500; }
   </section>
   <section class="col">
     <div class="card" style="flex: 0 0 auto">
-      <h2><span>SQL check (independent)</span></h2>
+      <h2><span>Proof: independent database check</span></h2>
       <div class="verdict" id="verdict">waiting</div>
       <pre class="sql" id="sqltext"></pre>
       <div id="rows"></div>
       <div class="graded" id="graded"></div>
     </div>
     <div class="card grow">
-      <h2><span>System log</span></h2>
+      <h2><span>Engineer log</span></h2>
       <div class="scroll grow feed" id="feed"></div>
     </div>
   </section>
@@ -292,7 +341,7 @@ async function start(lane) {
 async function ensureLane() {  // a message or Play with no lane started: start Resolve on the selected scenario
   if (S && S.session.lane && S.world.case === $("case").value) return true;
   try { await post("/api/live/start", {case: $("case").value, lane: (S && S.session.lane) || "resolve"}); } catch (e) { return false; }
-  toast(`Started ${(S && S.session.lane) || "Resolve"} on case ${$("case").value}: world re-seeded`);
+  toast((S && S.session.lane) === "naive" ? "Running without Rebound" : "Running with Rebound");
   await refresh(true);
   return true;
 }
@@ -317,7 +366,7 @@ $("play").onclick = async () => {
 $("form").onsubmit = (e) => { e.preventDefault(); send($("msg").value); };
 $("case").onchange = async () => {  // load the scenario's world at once, in the current lane (Resolve if none)
   play = false;
-  if (S && S.session.outage) { toast("Turn the DB outage off first: switching re-seeds the database"); $("case").value = S.world.case; return; }
+  if (S && S.session.outage) { toast("Bring the booking system back first (switching scenarios resets the database)"); $("case").value = S.world.case; return; }
   try { await post("/api/live/start", {case: $("case").value, lane: (S && S.session.lane) || "resolve"}); } catch (e) { return; }
   const p = cases.presets.find((x) => x.case === $("case").value); toast(p ? p.how : "World re-seeded for this case");
   refresh(true);
@@ -331,19 +380,19 @@ function quotesIn(text, quotes) {
 }
 function renderChat(R) {
   const lane = S.session.lane;
-  if (!S.session.request_id) { put("chat", `<div class="empty">Pick a scenario, then press <b>Play script</b> or type a message (Resolve starts by default). <b>Naive agent</b> and <b>Resolve</b> each re-seed the same world.</div>`); return; }
+  if (!S.session.request_id) { put("chat", `<div class="empty">Press <b>▶ Play scenario</b>, or type a message as the customer. <b>✗ Without Rebound</b> and <b>✓ With Rebound</b> each start the same situation from scratch.</div>`); return; }
   const v = R && R.versions.length ? R.versions[R.versions.length - 1] : null;
   const quotes = v ? v.rules.map((r) => r.quote) : [];
   let html = "";
   if (!R || !R.turns.length) html = `<div class="empty">The customer's appointment is shown in the schedule. Type a message, or use a line from the case file below.</div>`;
   for (const t of (R ? R.turns : [])) {
     if (t.role === "customer") html += `<div class="bubble customer"><span class="who">Customer</span>${quotesIn(t.text, quotes)}</div>`;
-    else html += `<div class="bubble assistant"><span class="who">${lane === "naive" ? "Naive agent" : "Resolve"}${t.kind === "confirm" ? " · asks before writing" : ""}</span>${esc(t.text)}</div>`;
+    else html += `<div class="bubble assistant"><span class="who">${lane === "naive" ? "AI agent (no Rebound)" : "AI assistant + Rebound"}${t.kind === "confirm" ? " · asks before booking" : ""}</span>${esc(t.text)}</div>`;
   }
   for (const f of since()) {  // what the naive agent did: it has no voice of its own in the conversation
     if (f.lane === "naive" && f.tag === "naive" && f.kind === "bad") html += `<div class="bubble system ${f.kind === "bad" ? "bad" : ""}">${esc(f.text)}</div>`;
   }
-  if (S.session.busy) html += `<div class="bubble system">model is reading…</div>`;
+  if (S.session.busy) html += `<div class="bubble system">the AI is reading…</div>`;
   put("chat", html);
   const sc = $("chat").parentElement; if (cache._chatLen !== html.length) { cache._chatLen = html.length; sc.scrollTop = sc.scrollHeight; }
 }
@@ -363,62 +412,123 @@ function renderRules(R) {
   put("rules", html); put("vers", `v${v.version}`);
 }
 
-function node(cls, t, d) { return `<div class="node ${cls}"><span class="dot"></span><div class="t">${esc(t)}</div><div class="d">${d}</div></div>`; }
+function node(cls, t, d, o = {}) {
+  return `<div class="node ${cls}"><span class="dot"></span><div class="t">${esc(t)}${o.rb ? `<span class="rb">REBOUND</span>` : ""}</div>`
+    + `<div class="d">${d}</div>${o.tech ? `<span class="tech">${esc(o.tech)}</span>` : ""}</div>`;
+}
 function renderPipe(R) {
   const lane = S.session.lane, naive = lane === "naive";
-  put("lanelbl", lane ? (naive ? "naive agent" : "Resolve") : "");
-  if (!lane) { put("pipe", `<div class="empty">Start a lane.</div>`); return; }
+  put("lanelbl", lane ? (naive ? "without Rebound" : "with Rebound") : "");
+  if (!lane) { put("pipe", `<div class="empty">Press <b>▶ Play scenario</b>, or run it <b>✗ Without Rebound</b> / <b>✓ With Rebound</b>.</div>`); return; }
   const E = R ? R.events : [], st = R ? R.state : null, F = since();
   const last = (k) => [...E].reverse().find((e) => e.kind === k);
   const lastW = [...E].reverse().find((e) => e.kind.startsWith("worker."));
   const reads = E.filter((e) => e.kind === "interpret" || e.kind === "revise");
   const lastRead = reads[reads.length - 1];
+  const sql = R && R.sql, done = R && TERMINAL.includes(st);
   const n = [];
   const cust = R ? R.turns.filter((t) => t.role === "customer") : [];
-  n.push(node(cust.length ? "done" : "active", "Customer message", cust.length ? `“${esc(cust[cust.length - 1].text.slice(0, 70))}”` : "waiting for the customer"));
-  if (S.session.busy) n.push(node("active", "Model reads it", esc(S.session.model) + (naive ? " · one shot, no booking history" : " · with booking history and open slots")));
-  else if (lastRead) n.push(node(lastRead.data.intent ? "done" : "bad", "Model reads it", `${reads.length} reading(s)` + (lastRead.data.intent ? "" : " · no usable reading") + (naive ? " · one shot" : "")));
-  else n.push(node("", "Model reads it", naive ? "one shot, no booking history" : "with booking history and open slots"));
+  // 1. customer
+  n.push(node(cust.length ? "done" : "active", "1 · Customer asks, in their own words",
+    cust.length ? `“${esc(cust[cust.length - 1].text.slice(0, 80))}”` : "waiting for the customer's message"));
+  // 2. AI reads
+  if (S.session.busy) n.push(node("active", "2 · The AI reads the message", "reading…", {tech: `${S.session.model}${naive ? ", one shot" : ""}`}));
+  else if (lastRead) n.push(node(lastRead.data.intent ? "done" : "bad", "2 · The AI reads the message",
+    lastRead.data.intent ? "its understanding is shown on the left" : "it could not make sense of it", {tech: `${S.session.model} · ${reads.length} reading(s)`}));
+  else n.push(node("", "2 · The AI reads the message", naive ? "once, without the customer's booking history" : "with the customer's booking history and the open slots", {tech: S.session.model}));
+  // 3. check against the customer's words
   const repaired = reads.some((e) => (e.data.attempts || 0) > 1);
-  if (naive) n.push(node(lastRead && !lastRead.data.intent ? "bad" : "skip", "Validator + repair", lastRead && !lastRead.data.intent ? "invalid reading and no repair turn: it gave up" : "no booking history to check what the customer referred to; no repair turn"));
-  else n.push(node(lastRead ? "done" : "", "Validator: quotes and facts", lastRead ? (repaired ? "rejected an invalid reading; the model repaired it" : "every rule quotes the customer's words") : "each rule must quote the customer; dates and names must exist"));
-  n.push(node(R && R.version ? "done" : "", "Approved version", R && R.version ? `v${R.version}, frozen while the worker runs` : "only a customer turn approves a version"));
-  if (naive) n.push(node("skip", "Ask / confirm before writing", "never asks: books whatever it read"));
-  else if (st === "needs_input") n.push(node("active", "Ask / confirm before writing", R.question && R.question.kind === "confirm" ? "proposed one exact slot; waiting for yes" : `asked the customer (${esc(R.question ? R.question.kind : "")}); waiting`));
-  else n.push(node(R && R.questions_asked ? "done" : "", "Ask / confirm before writing", R && R.questions_asked ? `${R.questions_asked} question(s) asked` : "asks when nothing authorized is open; confirms the exact slot"));
-  // worker
+  if (naive) n.push(node(lastRead && !lastRead.data.intent ? "bad" : "skip", "3 · Check the AI against the customer's words",
+    lastRead && !lastRead.data.intent ? "no second chance: the plain agent gave up" : "nobody checks: whatever the AI read is what gets booked", {rb: true}));
+  else n.push(node(lastRead ? "done" : "", "3 · Check the AI against the customer's words",
+    lastRead ? (repaired ? "caught a reading that did not hold up and had the AI fix it" : "every rule quotes the customer's exact words") : "every rule must quote the customer; dates and names must be real",
+    {rb: true, tech: "schema + quote validator, repair turn"}));
+  // 4. ask before booking
+  if (naive) n.push(node("skip", "4 · Ask the customer before booking", "never asks: books right away", {rb: true}));
+  else if (st === "needs_input") n.push(node("active", "4 · Ask the customer before booking",
+    R.question && R.question.kind === "confirm" ? "showing the customer the exact slot, waiting for a yes" : "nothing fits what the customer allowed, so it asks instead of guessing", {rb: true}));
+  else n.push(node(R && R.questions_asked ? "done" : "", "4 · Ask the customer before booking",
+    R && R.questions_asked ? `asked ${R.questions_asked} time(s); the customer answered` : "only books what the customer clearly allowed", {rb: true, tech: "versioned intent; only a customer turn approves a version"}));
+  // 5. book safely
   const crashed = F.find((f) => f.tag === "crash" && f.kind === "bad");
   const retries = E.filter((e) => e.kind === "worker.retry_later").length;
-  let wc = "", wd = "claims the request under a lease; key resolve:&lt;request&gt;:v&lt;n&gt;";
-  if (st === "claimed" && R.lease.owner === "worker-crashing") { wc = "bad"; wd = `worker killed after its POST; lease held until ${esc((R.lease.until || "").slice(11, 19))}, then another worker reconciles`; }
-  else if (lastW && lastW.kind === "worker.reconciled") { wc = "done"; wd = `reconciled the dead worker's attempt with the same key (${esc(lastW.data.outcome)})`; }
-  else if (st === "claimed") { wc = "active"; wd = "working"; }
-  else if (st === "ready" && lastW && lastW.kind === "worker.retry_later") { wc = "warn"; wd = `FieldDesk did not answer (${esc(lastW.data.reason)}); waiting, ${retries} retr${retries === 1 ? "y" : "ies"} so far. Nothing written.`; }
-  else if (st === "ready") { wc = "active"; wd = "searching the open slots"; }
-  else if (st === "completed") { const c = last("worker.completed"); wc = "done"; wd = crashed ? `${esc(c && c.data.owner)} finished after the crash: ${esc(c && c.data.how)}` : `${esc(c && c.data.how)}`; }
-  else if (lastW) { wc = "done"; wd = esc(lastW.kind.replace("worker.", "")) + (lastW.data.decision ? `: ${esc(lastW.data.decision)}` : ""); }
+  let wc = "", wd = naive ? "books the moment it has a reading" : "books once, and survives outages and crashes";
+  if (st === "claimed" && R.lease.owner === "worker-crashing") { wc = "bad"; wd = "CRASH right after the booking was written; the answer was lost. Rebound will check it, not book again"; }
+  else if (lastW && lastW.kind === "worker.reconciled") { wc = "done"; wd = "after the crash: confirmed the booking already made, no second booking"; }
+  else if (st === "ready" && S.session.outage) { wc = "warn"; wd = `booking system is down: waiting safely, nothing booked yet (${retries} retr${retries === 1 ? "y" : "ies"})`; }
+  else if (st === "ready" && lastW && lastW.kind === "worker.retry_later") { wc = "warn"; wd = `booking system did not answer: waiting (${retries} retr${retries === 1 ? "y" : "ies"}), nothing booked`; }
+  else if (st === "claimed" || st === "ready") { wc = "active"; wd = "looking at the open slots"; }
+  else if (st === "completed") { wc = "done"; wd = crashed ? "booked once, even though the worker crashed" : "booked"; }
   if (S.session.crash_armed && !crashed) wd += ` · <b style="color:var(--bad)">crash armed</b>`;
-  n.push(node(wc, "Worker (lease + idempotency key)", wd));
-  // API
+  n.push(node(wc, "5 · Book it safely", wd, {rb: !naive, tech: "leased worker, idempotency key, reconcile on restart"}));
+  // 6. booking system
   const comp = last("worker.completed"), taken = last("worker.slot_taken");
-  let ac = "", ad = "FieldDesk REST API: search, then one reschedule POST";
-  if (S.session.outage) { ac = "warn"; ad = "DB outage (Toxiproxy, 5 s latency): calls time out at 3 s"; }
-  else if (comp) { ac = "done"; ad = `change #${comp.data.change_id}` + (comp.data.replayed ? " · resend returned <b>replayed</b>: no second write" : ""); }
-  else if (taken) { ac = "warn"; ad = "409: the slot was taken; searching again"; }
-  n.push(node(ac, "FieldDesk API", ad));
-  // SQL
-  const sql = R && R.sql, done = R && TERMINAL.includes(st);
-  if (sql && done) { const ok = ["correct", "correct_no_booking"].includes(sql.verdict.verdict); n.push(node(ok ? "good" : "bad", "SQL check", `${esc(VERD[sql.verdict.verdict])} · ${sql.verdict.changes} change row(s)`)); }
-  else n.push(node("", "SQL check", "reads the database, not the agent"));
-  // calendar
+  let ac = "", ad = "the company's scheduling system (FieldDesk)";
+  if (S.session.outage) { ac = "warn"; ad = "DOWN: its database is too slow to answer"; }
+  else if (comp) { ac = "done"; ad = comp.data.replayed ? "said: already booked under this key, nothing new written" : "the appointment was moved"; }
+  else if (taken) { ac = "warn"; ad = "the slot was just taken by someone else; looking again"; }
+  n.push(node(ac, "6 · Booking system", ad, {tech: "FieldDesk REST API; outage = Toxiproxy 5 s latency"}));
+  // 7. independent check
+  if (sql && done) {
+    const ok = ["correct", "correct_no_booking"].includes(sql.verdict.verdict);
+    n.push(node(ok ? "good" : "bad", "7 · Independent check: is it what the customer wanted?", ok ? "yes" : (sql.verdict.unauthorized ? "NO: the customer never agreed to that slot" : esc(PLAIN[sql.verdict.verdict])), {rb: true, tech: "SQL against the case file, not the AI's word"}));
+  } else n.push(node("", "7 · Independent check: is it what the customer wanted?", "reads the database, not what the AI says", {rb: true, tech: "SQL oracle"}));
+  // 8. calendar
   const cal = R && R.calendar;
   const wrong = sql && done && sql.verdict.changes > 0 && sql.verdict.verdict !== "correct";
-  if (cal && cal.status === "synced") n.push(node(wrong ? "bad" : "good", "Technician calendar (CalDAV)", `${wrong ? "the wrong booking is now " : "event "}in ${esc((cal.held_by || []).map((h) => h.technician).join(", ") || "?")}'s calendar`));
-  else if (cal && cal.status === "pending") n.push(node("active", "Technician calendar (CalDAV)", `pending${cal.attempts ? `, ${cal.attempts} attempt(s)` : ""}${cal.error ? `: ${esc(cal.error)}` : ""}`));
-  else if (cal && cal.status === "failed") n.push(node("bad", "Technician calendar (CalDAV)", `failed: ${esc(cal.error)}`));
-  else n.push(node("", "Technician calendar (CalDAV)", "written after the booking commits"));
+  const who = cal && (cal.held_by || []).map((h) => h.technician).join(", ");
+  if (cal && cal.status === "synced") n.push(node(wrong ? "bad" : "good", "8 · Technician's calendar updated", wrong ? `the wrong booking is now in ${esc(who)}'s calendar` : `now in ${esc(who)}'s calendar`, {tech: "CalDAV (what Thunderbird shows)"}));
+  else if (cal && cal.status === "pending") n.push(node("active", "8 · Technician's calendar updated", "updating…", {tech: "CalDAV"}));
+  else if (cal && cal.status === "failed") n.push(node("bad", "8 · Technician's calendar updated", `failed: ${esc(cal.error)}`, {tech: "CalDAV"}));
+  else n.push(node("", "8 · Technician's calendar updated", "after the booking is made", {tech: "CalDAV"}));
   put("pipe", n.join(""));
 }
+const PLAIN = {correct: "right booking", correct_no_booking: "rightly booked nothing", unauthorized: "wrong booking: the customer never agreed", wrong_slot: "wrong slot", missed_booking: "gave up: nothing booked", duplicate_effect: "booked twice"};
+
+// The narrator: one plain sentence about what is happening now.
+function narrate(R) {
+  const ss = S.session, W = S.world, naive = ss.lane === "naive";
+  const who = W.customer.split(" ")[0];
+  if (!ss.lane) return {cls: "", t: `Pick a scenario, then run it <b>without Rebound</b> and <b>with Rebound</b>.`, s: W.means ? esc(W.means) : ""};
+  const st = R ? R.state : null, sql = R && R.sql, E = R ? R.events : [];
+  const v = R && R.versions.length ? R.versions[R.versions.length - 1] : null;
+  const crashed = since().find((f) => f.tag === "crash" && f.kind === "bad");
+  if (!R || !R.turns.length) return {cls: "info", t: naive ? `<b>Without Rebound:</b> a plain AI agent will read ${esc(who)}'s message once and book straight away.` : `<b>With Rebound:</b> the same AI model, but Rebound sits between it and the booking system.`, s: `${esc(who)}'s current appointment: ${esc(W.current || "")}.`};
+  if (ss.busy) return {cls: "info", t: `The AI is reading ${esc(who)}'s message…`, s: ""};
+  if (st === "completed" || st === "unresolved") {
+    const vd = sql ? sql.verdict : null;
+    const final = vd && vd.final_slot ? prettyAlias(vd.final_slot) : null;
+    const ok = vd && ["correct", "correct_no_booking"].includes(vd.verdict);
+    if (ok && vd.changes) return {cls: "good", t: `✓ <b>Right booking:</b> ${esc(final)}. That is what ${esc(who)} asked for.`, s: `Confirmed by an independent check of the database${R.questions_asked ? `, after asking ${R.questions_asked} time(s)` : ""}${crashed ? ", even through a crash" : ""}.`};
+    if (ok) return {cls: "good", t: `✓ Nothing booked, and that was right: nothing open fits what ${esc(who)} asked for.`, s: ""};
+    if (vd && vd.changes) return {cls: "bad", t: `✗ <b>Wrong booking:</b> ${esc(final)}. ${esc(who)} never agreed to that.`, s: `The AI said "Done" and the booking system said OK. Only the independent database check caught it.${W.graded.final.length ? ` ${esc(who)} wanted ${esc(W.graded.final.join(" or "))}.` : ""}`};
+    return {cls: "bad", t: naive ? `✗ The AI got confused and gave up: nothing booked.` : `Nothing booked: Rebound could not agree a slot with ${esc(who)}.`, s: naive ? `A plain agent has no way to check its reading or ask ${esc(who)}.` : ""};
+  }
+  if (st === "claimed" && R.lease.owner === "worker-crashing") return {cls: "bad", t: `💥 The worker <b>crashed right after booking</b>: it never heard whether the booking went through.`, s: "Rebound waits, then checks with the same booking key: if it went through, it is confirmed, never booked twice."};
+  if (ss.outage) return {cls: "warn", t: `⚠ The booking system is <b>down</b>. ${naive ? "The agent's booking waits" : "Rebound waits safely instead of guessing"}: nothing is booked yet.`, s: W.taken.length && !E.some((e) => e.kind === "worker.decided") ? "Meanwhile, other customers keep booking…" : ""};
+  if (st === "needs_input" && R.question && R.question.kind === "confirm") return {cls: "info", t: `<b>Rebound asks before booking:</b> “${esc(R.question.candidates[0].label)}, shall I book it?”`, s: `Nothing changes until ${esc(who)} says yes. If the AI misunderstood, ${esc(who)} can say no now.`};
+  if (st === "needs_input") return {cls: "info", t: `<b>Nothing open fits what ${esc(who)} allowed</b>, so Rebound asks instead of picking something.`, s: "A plain agent would guess here."};
+  if (naive && v) return {cls: "warn", t: `The AI understood: <b>${esc(v.summary)}</b>. It books right away. Nobody checks.`, s: ""};
+  if (v) return {cls: "info", t: `Rebound checked the AI's reading against ${esc(who)}'s words and is looking for a slot that fits.`, s: esc(v.summary)};
+  return {cls: "info", t: "Working…", s: ""};
+}
+function resultCard(lane, r) {
+  const title = lane === "naive" ? "✗ Without Rebound" : "✓ With Rebound";
+  if (!r) return `<div class="res"><div class="h">${title}</div><div class="v" style="color:var(--muted)">not run yet</div></div>`;
+  const ok = ["correct", "correct_no_booking"].includes(r.verdict);
+  const v = r.verdict === "correct" ? `Right: ${esc(r.final)}` : r.verdict === "unauthorized" ? `Wrong: ${esc(r.final)}` : r.final ? `${esc(PLAIN[r.verdict])}: ${esc(r.final)}` : esc(PLAIN[r.verdict]);
+  const x = [r.questions ? `asked ${r.questions}×` : (lane === "naive" ? "never asked" : ""), r.retries ? `waited through the outage (${r.retries} retries)` : "", r.crash ? "survived a crash, booked once" : "", r.verdict === "unauthorized" ? "customer never agreed" : ""].filter(Boolean).join(" · ");
+  return `<div class="res ${ok ? "good" : "bad"}"><div class="h">${title}</div><div class="v">${v}</div><div class="x">${x}</div></div>`;
+}
+function renderStory(R) {
+  const n = narrate(R);
+  $("now").className = "now " + n.cls;
+  put("now", `<div class="lbl2">${S.session.lane ? (S.session.lane === "naive" ? "Now · without Rebound" : "Now · with Rebound") : "Rebound live demo"}</div><div>${n.t}</div>${n.s ? `<small>${n.s}</small>` : ""}`);
+  const W = S.world, res = S.results || {};
+  put("score", resultCard("naive", res.naive) + resultCard("resolve", res.resolve)
+    + `<div class="res key"><div class="h">What ${esc(W.customer.split(" ")[0])} actually wanted</div><div class="v">${esc(W.graded.final.join(" or ") || "no change")}</div><div class="x">${esc(W.means || "")}</div></div>`);
+}
+
 const VERD = {correct: "CORRECT", correct_no_booking: "CORRECT (no booking)", unauthorized: "UNAUTHORIZED BOOKING", wrong_slot: "WRONG SLOT", missed_booking: "NOTHING BOOKED", duplicate_effect: "DOUBLE BOOKING"};
 
 function renderCal(R) {
@@ -489,7 +599,7 @@ function renderSql(R) {
     put("rows", sql.changes.length ? `<table><tr><th>id</th><th>to</th><th>idempotency key</th></tr>${sql.changes.map((c) => `<tr><td>${c.id}</td><td>${esc(prettyAlias(c.to))}</td><td>${esc(c.key)}</td></tr>`).join("")}</table>` : `<div class="empty">0 rows: nothing written.</div>`);
   }
   const g = W.graded;
-  put("graded", `Graded against the case file: authorized <b>${esc(g.authorized[0].join("; ") || "nothing")}</b>`
+  put("graded", `Answer key (written before any AI saw it): the customer allowed <b>${esc(g.authorized[0].join("; ") || "nothing")}</b>`
     + (g.authorized.length > 1 ? ` after the opening message; after the customer's answer also <b>${esc(g.authorized[g.authorized.length - 1].filter((x) => !g.authorized[0].includes(x)).join("; "))}</b>` : "")
     + `. Correct final: <b>${esc(g.final.join(" or ") || "no booking")}</b>.`);
 }
@@ -516,16 +626,15 @@ function renderTop(R) {
   const ss = S.session;
   $("naive").classList.toggle("on", ss.lane === "naive");
   $("resolve").classList.toggle("on", ss.lane === "resolve");
-  $("outage").classList.toggle("on", ss.outage); $("outage").textContent = ss.outage ? "DB outage: ON" : "DB outage";
-  $("crash").classList.toggle("on", ss.crash_armed); $("crash").textContent = ss.crash_armed ? "Kill worker: armed" : "Kill worker after write";
-  $("take").disabled = !S.world.taken.length || !ss.lane; $("take").title = S.world.taken.length ? `Another customer books ${S.world.taken.join("; ")}` : "This case file names no contested slot";
+  $("outage").classList.toggle("on", ss.outage); $("outage").textContent = ss.outage ? "Booking system DOWN (restore)" : "Booking system down";
+  $("crash").classList.toggle("on", ss.crash_armed); $("crash").textContent = ss.crash_armed ? "Crash armed" : "Crash after booking";
+  $("take").disabled = !S.world.taken.length || !ss.lane; $("take").title = S.world.taken.length ? `Another customer books ${S.world.taken.join("; ")}` : "No other customer competes for a slot in this scenario";
   $("naive").disabled = $("resolve").disabled = ss.outage || ss.busy;
-  $("play").classList.toggle("on", play); $("play").textContent = play ? "Playing… (stop)" : "Play script";
+  $("play").classList.toggle("on", play); $("play").textContent = play ? "■ Stop" : "▶ Play scenario";
   $("send").disabled = ss.busy;
   if (!cache._caseSet) { $("case").value = S.world.case; cache._caseSet = true; }
-  put("meta", `model <b>${esc(ss.model)}</b> · ${ss.model_calls} call(s) · $${ss.model_cost_usd.toFixed(4)}`);
+  put("meta", `AI model <b>${esc(ss.model)}</b> · ${ss.model_calls} call(s) · $${ss.model_cost_usd.toFixed(4)}<br>synthetic data${ss.request_id ? ` · ${esc(ss.request_id)}` : ""}`);
   put("reqstate", R ? esc(R.state.replace("_", " ")) : "");
-  put("caption", `<b>Synthetic data${play ? ", scripted customer (case file lines)" : ""}.</b> Read live from the request store, FieldDesk's database, the CalDAV calendars and the SQL oracle${ss.request_id ? ` · request ${esc(ss.request_id)}` : ""}.`);
 }
 
 // Play script: the scenario's plan (faults) plus the case file's customer lines. It never says yes to a slot the case
@@ -568,13 +677,19 @@ async function autoplay(R) {
 }
 
 async function refresh() {
-  try { S = await (await fetch("/api/live/state")).json(); } catch (e) { put("caption", "Cannot reach the live server."); return; }
+  try { S = await (await fetch("/api/live/state")).json(); } catch (e) { put("now", "Cannot reach the live server."); return; }
   const R = S.request;
   // a new request sits in needs_input with no question until its first reading is stored: show it as reading
   if (R && R.state === "needs_input" && !R.question) R.state = S.session.busy ? "reading" : "no reading";
-  renderTop(R); renderChat(R); renderRules(R); renderPipe(R); renderCal(R); renderSql(R); renderFeed(); renderChips(R);
+  renderTop(R); renderStory(R); renderChat(R); renderRules(R); renderPipe(R); renderCal(R); renderSql(R); renderFeed(); renderChips(R);
   autoplay(R);
 }
+function showIntro(on) { $("intro").hidden = !on; }
+$("help").onclick = () => showIntro(true);
+$("introok").onclick = () => { showIntro(false); try { localStorage.setItem("rebound-intro-seen", "1"); } catch (e) {} };
+$("intro").onclick = (e) => { if (e.target === $("intro")) showIntro(false); };
+let seen = false; try { seen = localStorage.getItem("rebound-intro-seen") === "1"; } catch (e) {}
+if (!seen && !location.hash.includes("nointro")) showIntro(true);
 loadCases().then(refresh); setInterval(refresh, 700);
 </script>
 </body>
