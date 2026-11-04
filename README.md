@@ -1,180 +1,159 @@
 # Rebound
 
-**AI agents fail quietly against real APIs. Rebound measures it, contains it, and recovers what the customer actually asked for.**
+**HTTP 200 proves the API accepted a request. It does not prove the customer authorized the result.**
 
-An agent says "Done!", the API returns 200 OK, and the booking is wrong: Muse Spark booked 10:00 for a customer who wrote "6 pm only". Only an independent check of the database noticed. Rebound has two parts, built on **Meta Muse Spark 1.3** and a small field-service scheduling API (**FieldDesk**):
+Rebound keeps AI agents from booking what a customer did not ask for, even when the request is vague, the booking
+system is failing, or a worker crashes mid-write. It is built on **Meta Muse Spark 1.3** and a small field-service
+scheduling API built for this project, **FieldDesk**, and has two parts:
 
-1. **The study (Oct 27–Nov 2):** real Muse tool-using agents rescheduling appointments while the API's database link is slowed. Every outcome is judged in SQL, never by a model.
-2. **Resolve (Nov 3):** a scheduling-recovery assistant. When an outage or changed availability makes a request impossible, the model turns the customer's words into typed, versioned constraints. Deterministic code books only what the customer authorized, asks before any trade-off, survives a worker crash without double-booking, and SQL confirms the result.
+1. **The study (Oct 27 – Nov 2):** real Muse Spark agents rescheduling appointments while the API's database link is
+   slowed. Every outcome is judged in SQL, never by a model.
+2. **Resolve (Nov 3 – 4):** a scheduling-recovery service built on what the study found. The model turns a customer's
+   words into typed constraints; deterministic code decides what may be booked, asks before anything the customer did
+   not clearly allow, waits out outages and recovers from crashes without booking twice; SQL checks the result.
 
-> Built for the Meta Global AI Developer Hackathon 2026 (Indie track). Every number below is a measured value from a retained run, failures included. Synthetic data and scripted customers throughout.
+> Meta Global AI Developer Hackathon 2026, Indie track. Synthetic customers and data, one laptop. Every number below
+> is a measured value from a retained run, failures included.
 
-## Results at a glance
+## The problem
 
-| Finding | Evidence |
-|---|---|
-| With no way to wait, Muse agents retried before Retry-After every time; with a neutral `wait` tool, never | 69/69, 74/74, 68/68 (10 s fault); 139/139 (20 s); refusal probe 60/60 early without the tool, 0/60 with it |
-| A runtime guard that waits out Retry-After fixes it at no cost in correctness | 0 early, 209/209 correct goals |
-| An admission gate shortens recovery mostly by shaping ordinary traffic | recovery 20–22 s → 10 s; agents were only 0.4–1.9% of in-flight time, so **agents did not measurably delay recovery** (our original thesis; a null result) |
-| Resolve on 24 frozen held-out conversations, Muse Spark | **23/24** correct outcomes (19 correct bookings + 4 correct refusals), **1 unauthorized booking**, 34 model calls, $0.23 |
-| Same, with the customer confirming the exact slot before any write (product mode; the simulated customer checks each proposal against the answer key) | **23/24, 0 unauthorized**, 35 calls, $0.25 |
-| A hand-written rule parser, frozen before it saw the held-out set, same pipeline | 20/24, 2 unauthorized: the model wins by 3 cases; rules break on wording (negation scope, plurals, relative dates), the model on meaning |
-| Same model, one-shot extraction, no history, no questions | 15/24, 2 unauthorized: the gap is in history references, corrections and renewed permission |
-| Capable form with correct entries (same execution path) | 24/24: when the intent is right, the deterministic path makes no errors |
-| Llama 3.1 8B in the same pipeline (local) | 10/24, 2 unauthorized: weaker, but mostly refuses rather than books wrong once code holds it to a schema |
-| Targeted recovery checks on the live stack (20 checks, one run each; not reliability trials) | 20/20: a correction or decline takes effect only after a write in doubt is settled, a superseded write is voided and never resent, a stale worker does not send, backoff after failures, a question stored atomically with its email; paging past 50 results, 7 invalid-intent kinds, crashes at 3 points, a real lost acknowledgment, connection reset mid-write, silent link mid-search, renewed permission, correction preserved, confirm-before-booking, email delivery with retry, calendar sync through a calendar-server outage |
+In the study, Muse Spark booked 10:00 for a customer who wrote "6 pm only". The agent said "Done!", the API said
+200 OK, and only an independent database check noticed. Under back-pressure the same agents retried before
+Retry-After every time, because their tools gave them no way to wait: adding a neutral `wait` tool took early retries
+from 60 of 60 to 0 of 60. The failures were in the interface between the model and the system, which is where Resolve
+puts its guarantees.
 
-The pass mark I set for Resolve before the run was at least 22/24 and zero unauthorized bookings. Without confirmation the first part is met and the second is not (H15, "same time of day as my current booking", was read as "morning"); with confirmation both are met, with a simulated customer who always reads the proposal. Details: [`docs/resolve_results.md`](docs/resolve_results.md).
-
-## Resolve
+## How Resolve works
 
 ```text
-customer text --> model (Muse): typed intent, each rule quoting the customer's words
-              --> validator: real dates, possible windows, technicians named or grounded in history
-              --> versioned store (approved by a customer turn)
-              --> worker: reconcile any unconfirmed write, search every open slot, decide
+customer text --> Muse Spark: typed intent; every rule quotes the customer's words
+              --> validator: real dates, possible windows, technicians named or grounded in booking history
+              --> versioned store: only a customer turn approves a version
+              --> leased worker: settle any write in doubt, search every open slot, decide
                      book (authorized) | ask permission (real slots) | clarify | nothing fits
-              --> FieldDesk API (idempotency key per request and version)
-              --> independent SQL oracle vs. hand-written expected outcomes
+              --> FieldDesk API: one write per approved version (idempotency key; superseded keys voided)
+              --> independent SQL check against hand-written expected outcomes (evaluation only)
 ```
 
-The model never sees availability, so it cannot invent slots; it never books, so it cannot book without authority. A correction is applied as explicit operations on the stored intent, so untouched constraints survive by construction. In product mode the customer confirms the exact slot before anything is written, and every question and outcome is emailed to the customer (SMTP; locally to a test inbox) from a queue written in the same transaction. Each booking is mirrored into the assigned technician's calendar over
-CalDAV (locally a Radicale server any calendar app can subscribe to). Design, failure handling and security: [`docs/architecture.md`](docs/architecture.md) and the [decision records](docs/decisions/).
+- **The model proposes, code decides.** The model never sees availability, so it cannot invent a slot, and it never
+  books. Corrections are explicit operations on the stored intent, so untouched constraints survive.
+- **Confirm before booking.** In product mode the customer sees the exact slot and must say yes before anything is
+  written.
+- **Failure handling.** Outages release the request with backoff (honoring Retry-After); a crash after a write is
+  reconciled by resending the same key (`replayed`, no second write); a correction or decline takes effect only after
+  any write in doubt is settled; customer emails and calendar updates are queued in the same transaction as the state
+  change and retried.
+- **Integrations.** Questions and outcomes go to the customer by SMTP; each booking is mirrored into the technician's
+  calendar over CalDAV. Locally both are containers (a test inbox, a Radicale server Thunderbird can subscribe to).
+
+Details: [architecture](docs/architecture.md), [decision records](docs/decisions/).
+
+**When not to use AI here:** a customer who taps a link should get a slot picker. Resolve is for requests that arrive
+as text (SMS replies, email, call notes) with conditions a picker cannot record.
+
+## Use of Meta AI
+
+| Model | Where | What it does |
+|---|---|---|
+| Muse Spark 1.3 (Meta Model API, Responses endpoint, tool calling) | `resolve/interpret.py`, `resolve/models.py` | Turns a customer message into a typed intent (one tool call, JSON schema, at most one repair turn) and turns a later message into explicit patch operations. Capped per process by calls and dollars. |
+| Muse Spark 1.3 | `harness/agent.py` | The study's tool-using agents: reschedule appointments through FieldDesk's API under injected faults. |
+| Llama 3.1 8B (open weights, local via Ollama) | `resolve/eval/run.py` | Compared in the same Resolve pipeline: 10/24, mostly refusals rather than wrong bookings. |
+
+Development used a free local model (qwen3-14b via Ollama); every Muse number below is from a paid, capped run.
+
+## Results
+
+| Measure | Result | Evidence |
+|---|---|---|
+| Resolve, 24 held-out conversations frozen before any model saw them, Muse | 23/24 correct (19 bookings + 4 correct refusals), 1 unauthorized booking, $0.23 | [resolve_results](docs/resolve_results.md) |
+| Same, customer confirms the exact slot first (simulated customer who reads every proposal) | 23/24, 0 unauthorized, $0.25 | same |
+| Same model in one shot (no history, no questions) | 15/24, 2 unauthorized | same |
+| Hand-written rule parser, frozen before the held-out set | 20/24, 2 unauthorized | same |
+| Form with correct entries, same execution path | 24/24 | same |
+| Targeted recovery checks on the live stack (one run each, not reliability trials) | 20/20 | same; `make resolve-faults` |
+| Study: early retries without a way to wait / with a `wait` tool | 69/69, 74/74, 68/68 and 139/139 early / 0 of 60 | [results](docs/results.md), [policy probe](docs/policy_probe_results.md) |
+| Study: admission gate, recovery after a 10 s fault | 20–22 s to 10 s (the metric's floor) | [results](docs/results.md) |
+| Study thesis, "agents delay recovery" | not supported: agents were 0.4–1.9% of in-flight time | [limitations](docs/limitations.md) |
+
+The pass mark set before the held-out run was at least 22/24 and zero unauthorized bookings. Without confirmation
+Resolve met the first and not the second: case H15, "same time of day as my current booking", was read as "morning"
+and quoted real words with the wrong meaning, which validation cannot catch. Confirmation is the guard. One-page
+summary: [case study](docs/case_study.md).
+
+## Run it
+
+**Prerequisites:** Linux, or Windows 11 with WSL2 (keep the repository in the Linux filesystem); Docker with Compose;
+[uv](https://docs.astral.sh/uv/); at least 8 logical CPUs (compose pins containers to CPUs 2–6). A Meta Model API key
+only for the Muse paths.
 
 ```bash
-make sut-up && make seed      # stack and template data (see Quick start)
-make resolve-ui               # the screen: http://127.0.0.1:8090/
-make resolve-demo             # full story on the local model (Ollama); free
-scripts/resolve_demo_muse.sh  # same on Muse Spark (paid, capped at 6 calls / $0.25)
-make resolve-faults           # recovery checks on the live stack, no model
-make resolve-form             # held-out cases through the form arm, no model
-
-# deployed: worker + service containers (service on 127.0.0.1:8091, no auth: localhost only)
-docker compose -f docker/compose.yml --profile resolve up -d
-uv run python scripts/resolve_service_e2e.py   # intake over HTTP -> worker -> confirm -> SQL verdict (1 Muse call)
-```
-
-### When not to use AI here
-
-- **A customer who taps a link and picks a slot should get a slot picker.** It is faster, free and cannot misread anyone. Resolve is for requests that arrive as text (SMS replies, email, call notes) and carry conditions a picker cannot record.
-- **Retries belong in transport middleware**, not in a model's `wait` tool. The study's `wait` tool was a probe of agent behavior; it costs a model call per resume.
-- **The durable queue, idempotency and SQL checks are standard engineering.** The model's job is only the part code cannot do: turning words into constraints and corrections.
-
-### What did not work
-
-- The study's thesis, that agents delay API recovery, was not supported at our traffic mix.
-- Llama 3.1 8B via Ollama completed 0 of 24 goal-preservation tasks through raw tool use; inside Resolve's validated pipeline it reached 10/24. Its first run crashed Resolve with malformed output (now handled).
-- Locally (qwen3-14b) Resolve scored 16/24 with 2 unauthorized bookings; the first prompt made 3 unauthorized bookings in 6 dev cases.
-- A hand-written rule parser came within 3 cases of Muse, on 24 conversations I wrote myself, which favors the parser.
-- No real users, no real email provider (local test inbox), no hosted calendar provider (local CalDAV server), no data on how often customers write requests instead of picking a slot. See the limitations in [`docs/resolve_results.md`](docs/resolve_results.md).
-
-## The study: what it does
-
-1. Runs a population of real tool-using agents, built on **Meta Muse Spark 1.3**, doing a real business task: rescheduling field-service appointments on **FieldDesk**, a small backend built for this project.
-2. While they work, adds 400 ms of latency to the API's database link for 10 seconds, using Toxiproxy.
-3. Measures when the API returns to healthy service, using backend-side data and a recovery definition written down before evaluation.
-4. Repeats the same goals at the same times with controls: a robust scripted client (paced like the agents, or unpaced), the same trial with no goal clients at all (background only), and an open-loop replay of a healthy reference agent trace (a traffic regression, not a causal counterfactual: it ignores responses).
-5. Turns on an admission gate (a concurrency limit with a bounded queue and fast 503 + Retry-After) and checks, with fresh agents, whether recovery improves while correct work is preserved.
-6. Checks a recovery contract per trial: correct business outcomes for every scheduled goal, and whether each client waited out Retry-After before its next request. Every verdict carries witness IDs that join the model call, the HTTP attempt and the backend record.
-
-An independent SQL oracle checks every goal against the database. **No language model grades anything.**
-
-## How it works
-
-```text
-Meta Model API (muse-spark-1.3)
-          ^ agent model calls
-Runner (Python) --HTTP--> FieldDesk API (FastAPI + gate) --SQL--> Toxiproxy --SQL--> PostgreSQL 16
-   |  fault control (Toxiproxy API)                                               ^
-   +-- oracle (read-only, bypasses the proxy) ----------------------------------- +
-   +-- results: runs/<experiment>/<trial>/  (JSONL events, verdicts, report.html)
-```
-
-| Part | Tech |
-|---|---|
-| Backend under test | FastAPI, Uvicorn, asyncpg, PostgreSQL 16 |
-| Fault injection | Toxiproxy (latency toxic on the DB link) |
-| Agents | Meta Model API, Responses endpoint, tool calling |
-| Runner, oracle, analysis | Python 3.12, httpx, pandas, matplotlib, Jinja2 |
-| Packaging | Docker Compose, uv, Make |
-
-## Quick start (Windows 11 + WSL2, or any Linux)
-
-```bash
-# inside WSL2 Ubuntu (keep the repo in the Linux filesystem, not /mnt/c)
 git clone https://github.com/sasikiran1/rebound && cd rebound
+cp .env.example .env              # add MODEL_API_KEY for the Muse paths
 uv sync
-make sut-up          # postgres, toxiproxy, fielddesk
-make seed tasks      # seeded synthetic data and task sets
-make preflight
-
-# reproduce published results without any model key: raw checksums first (fails closed),
-# then re-analysis into <trial>/reanalysis/, compared with the saved verdict
-make verify RUN=runs/<experiment>
-
-# run a fresh trial (needs a Meta Model API key; costs real money)
-export MODEL_API_KEY=...
-make trial MANIFEST=manifests/frozen/eval_v1.yaml CONDITION=agent GATE=off REPEAT=1
+make sut-up                       # PostgreSQL 16, Toxiproxy, FieldDesk
+make seed                         # seeded synthetic template database
+make preflight                    # fresh trial database, FieldDesk restarted, health checked
+make resolve-up                   # calendar server and test inbox
+make check                        # lint, unit tests, no artificial delays in the backend
 ```
 
-## Study results
+**No model key needed:**
 
-For the charts, download the repository and open [`ui/index.html`](ui/index.html) in a browser. It needs no server, and every number comes from the recorded trial bundles.
+```bash
+make resolve-faults               # 20 recovery checks against the live stack
+make resolve-form                 # the 24 held-out cases through the form arm, judged in SQL
+docker compose -f docker/compose.yml --profile resolve up -d   # deployed worker and service
+uv run python scripts/resolve_service_e2e.py --form            # intake -> worker -> booking -> calendar -> SQL
+```
 
-The raw bundles are in the [`evidence-v1` release](https://github.com/sasikiran1/rebound/releases/tag/evidence-v1), one archive per experiment. To re-derive a result with no model key:
+**The live demo (Muse):**
+
+```bash
+make resolve-live MODEL=muse-spark-1.3    # capped at 20 calls / $0.45; open http://127.0.0.1:8092/
+```
+
+Click **Rebound**, then **▶ Play scenario**: a messy request, the booking system going down, the customer's first
+choice taken during the outage, a question, a correction, a confirmation, and a worker killed right after its write,
+ending in one correct change and the event in the technician's calendar. About 2 Muse calls ($0.02). **One-shot
+baseline** runs the same model without history, questions or confirmation on the same world. The launcher stops the `resolve-worker` container while the screen runs;
+start it again with `docker compose -f docker/compose.yml --profile resolve start resolve-worker`.
+
+**Reproduce the study without a key:** download a bundle from the
+[`evidence-v1` release](https://github.com/sasikiran1/rebound/releases/tag/evidence-v1), then
 
 ```bash
 tar -xf eval-v1.tar && mkdir -p runs/eval-v1
 for f in eval-v1/tr_*.tgz; do tar -xzf "$f" -C runs/eval-v1; done
-make verify RUN=runs/eval-v1
+make verify RUN=runs/eval-v1      # checksums first (fails closed), then re-analysis vs. the saved verdict
 ```
 
-Frozen evaluation `eval-v1`: Muse Spark 1.3 agents, task set B, three paired blocks plus one unfamiliar 20 s fault pair. Every trial, per block, is in [`docs/results.md`](docs/results.md).
-
-| | Gate off | Gate on |
-|---|---|---|
-| Recovery time after a 10 s fault (T_rec, 3 blocks) | 22 / 21 / 20 s | 10 / 10 / 10 s (the metric's floor) |
-| Lost ordinary-user requests after a 10 s fault | 7,882–8,417 | 5,011–5,176 |
-| Correct agent goals of 209 (10 s fault) | 209 each | 208 each |
-| Recovery after the unfamiliar 20 s fault (1 pair) | 34 s, `slow` | 10 s |
-| Lost ordinary-user requests, 20 s fault | 19,491 | 10,212 |
-| Correct agent goals of 209, 20 s fault | 209 | 201 |
-| Agent requests sent before Retry-After expired | — | 100% (69/69, 74/74, 68/68; 139/139 at 20 s) |
-
-- **A short fault does not need the gate:** both arms recover fast, so by the frozen rules the gate is not needed at 10 s. It still spares ordinary users about 3,000 failed requests for one lost goal.
-- **A longer fault does, with a cost:** at 20 s the gate halves lost service and restores health at once, but agents lose 8 correct goals (beyond the predeclared limit of 3; one trial pair, weaker evidence).
-- **With no way to wait, agents retried early every time** (an interface gap, not a disposition: see the refusal probe below). The scripted client sent 3 of 23 early. Agents were only 0.4–1.9% of the API's load during the fault, so this did not slow recovery; the goals it cost were the agents' own. With a runtime guard that waits out Retry-After (`--retry-after-guard`), no request went early and no goal was lost: 209 of 209 at 10 s and at 20 s. That missed one pre-registered bar (refusals fell to 53–65%, the bar was 50%) and did not improve recovery. See [`docs/agent_v2_protocol.md`](docs/agent_v2_protocol.md) and [`docs/results.md`](docs/results.md).
-- **Why agents ignored it: they had no way to wait.** In a refusal probe (every goal refused twice, Retry-After 2 s, 30 goals per arm), Muse sent 60 of 60 requests early with the original tools, and 0 of 60 once the tool list included a neutral `wait` tool. Muse used it after every refusal, with no prompt change. A served agent policy (`/.well-known/agent-policy.json`, stated in each 503) added nothing beyond the tool, and without the tool it left 56 of 60 early. A pacing sweep shows that apparent compliance without a wait tool is just client latency: 100% early with no pause, 85% with a 1 s pause, 0% at 2 s. Under the real 20 s fault, the wait tool alone kept 208 of 209 goals (201 without it) with 1 of 61 requests early, and 61 refusals against the client guard's 113 (one trial). See [`docs/policy_probe_results.md`](docs/policy_probe_results.md).
-- **Separate finding (local models, no fault):** when the tool hid valid afternoon slots behind a 4 KB result cap, one model booked 08:00 and 11:00 against "15:00 or later", and the original date-only oracle passed those bookings. A start-time filter fixed 8 of 8 such cases; the oracle now checks stated constraints. See [`docs/ollama_protocol.md`](docs/ollama_protocol.md) for the local-model rules.
-
-## What this is not
-
-- Not a load-testing platform, and not a general chaos tool.
-- Not a benchmark of models. It covers one workflow, one prompt, one fault and one scaled-down backend.
-- Not tested against anyone else's systems. Everything runs on hardware we own, with synthetic data.
+Live study trials need at least 16 logical CPUs and a key; see [protocol](docs/protocol.md). The results page
+[`ui/index.html`](ui/index.html) opens in a browser without a server.
 
 ## Limitations
 
-One paid model, one workflow, one fault type, one gate setting, one deliberately constrained backend on one laptop; three paired blocks and one unfamiliar-fault pair. The recovery metric has a 10 s floor. Agents were a small share of load, so this does not show that agents delay recovery. A recorded agent transcript cannot show what a fresh agent would do; only fresh live-agent trials can. See [`docs/limitations.md`](docs/limitations.md).
+- Synthetic data, scripted customers, hand-written cases; 24 held-out conversations is a prototype check, not a
+  reliability estimate, and the author wrote the cases, which favors the rule parser.
+- Zero unauthorized bookings with confirmation assumes a customer who reads each proposal.
+- The recovery checks are targeted checks of the mechanism under the injected conditions.
+- No authentication: every service binds to 127.0.0.1. A local test inbox and CalDAV server stand in for real
+  providers; the calendar is a one-way mirror.
+- The study covers one model, one workflow, one fault type and one backend; at its traffic mix agents did not
+  measurably slow recovery. Full list: [limitations](docs/limitations.md).
 
 ## Repository
 
 | Path | Contents |
 |---|---|
-| `resolve/` | Resolve product: intent contract, interpretation, evaluator, service, store, worker, FieldDesk client, screen |
-| `resolve/eval/` | Resolve evaluation: case seeding, runner arms, SQL oracle, recovery checks, scripted demo |
-| `data/resolve/` | Resolve cases: 6 dev, 24 frozen held-out, 4 fault fixtures |
-| `backend/` | FieldDesk, the API under test, with the admission gate |
-| `harness/` | Trial runner, agents, scripted clients, fault control |
-| `oracle/` | SQL verdicts on business outcomes |
-| `analysis/` | Recovery metrics, contracts and reports |
-| `manifests/`, `prompts/`, `data/` | Experiment settings, agent prompt and tools, seeded data and task sets |
-| `docker/` | Compose stack (Resolve containers under the `resolve` profile) (fixed CPU sets; live trials need at least 16 vCPUs, `make verify` does not) |
-| `docs/` | [Guide to the documents](docs/README.md), starting with the frozen rules in [`docs/protocol.md`](docs/protocol.md) |
+| `resolve/` | Resolve: intent contract, interpretation, evaluator, conversation service, store, worker, notifications, calendar sync, HTTP service |
+| `resolve/eval/` | Resolve evaluation: case seeding, arms, SQL oracle, recovery checks, scripted demo, live console and screen |
+| `data/resolve/` | 6 dev cases, 24 frozen held-out cases, 4 fault fixtures |
+| `backend/` | FieldDesk, the booking API, with the admission gate and key fencing |
+| `harness/`, `oracle/`, `analysis/` | The study: trial runner and agents, SQL verdicts, recovery metrics and reports |
+| `manifests/`, `prompts/`, `data/` | Experiment settings, prompts and tool schemas, seeded data and task sets |
+| `docker/` | Compose stack; Resolve containers under the `resolve` profile |
+| `ui/` | Results page, Resolve screen, live demo screen |
+| `docs/` | [Guide to the documents](docs/README.md) |
 | `scripts/` | [Guide to the scripts](scripts/README.md) |
 
-All code and experiments here were built during the hackathon, Oct 27 – Nov 4, 2026.
-
-## License
-
-MIT
+Built during the hackathon, Oct 27 – Nov 4, 2026. MIT license.

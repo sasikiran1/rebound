@@ -17,12 +17,12 @@ jobs:
       - name: pytest
         run: uv run pytest -q
       - name: resolve modules import (product, service, evaluation)
-        run: uv run python -c "import resolve.app, resolve.worker, resolve.models, resolve.eval.run, resolve.eval.faults, resolve.eval.demo"
+        run: uv run python -c "import resolve.app, resolve.worker, resolve.models, resolve.calendar, resolve.notify, resolve.eval.run, resolve.eval.faults, resolve.eval.demo, resolve.eval.live, resolve.eval.live_web"
       - name: compose file is valid, including the resolve profile
         run: docker compose -f docker/compose.yml --profile resolve config -q
       - name: no artificial delays in backend/
         run: |
-          if grep -rni "sleep" backend/; then
-            echo "::error::'sleep' found in backend/"
+          if grep -rnE --include='*.py' 'sleep[[:space:]]*\(' backend/; then
+            echo "::error::a sleep call found in backend/"
             exit 1
           fi

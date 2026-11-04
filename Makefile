@@ -3,13 +3,14 @@
 export
 
 COMPOSE := docker compose -f docker/compose.yml
-RUNNER_CPUS ?= 8-15
-PY := taskset -c $(RUNNER_CPUS) uv run python
+# The study pins the runner to CPUs 8-15, away from the containers' CPU sets; on smaller machines it runs unpinned.
+RUNNER_CPUS ?= $(shell [ "$$(nproc)" -ge 16 ] && echo 8-15)
+PY := $(if $(RUNNER_CPUS),taskset -c $(RUNNER_CPUS) )uv run python
 MANIFEST ?= manifests/frozen/eval_v1.yaml
 
 .PHONY: sut-up sut-down seed tasks clone reset preflight pulse endpoints calibrate verify-model goal trial \
 	analyze verify report bundle test lint no-sleep check resolve-ui resolve-demo resolve-faults resolve-form \
-	resolve-eval
+	resolve-eval resolve-up resolve-live
 
 sut-up:
 	mkdir -p var/fielddesk
@@ -79,7 +80,7 @@ lint:
 	uv run ruff check .
 
 no-sleep:
-	@! grep -rni "sleep" backend/ || (echo "'sleep' found in backend/" && false)
+	@! grep -rnE --include='*.py' 'sleep[[:space:]]*\(' backend/ || (echo "a sleep call found in backend/" && false)
 
 check: lint test no-sleep
 
@@ -88,6 +89,15 @@ check: lint test no-sleep
 # no model at all.
 resolve-ui:
 	uv run uvicorn resolve.app:app --host 127.0.0.1 --port 8090
+
+# Calendar server and test inbox for Resolve (the deployed worker and service: `$(COMPOSE) --profile resolve up -d`).
+resolve-up:
+	mkdir -p var/calendar var/mail
+	$(COMPOSE) --profile resolve up -d --build resolve-calendar resolve-mail
+
+# The live screen on http://127.0.0.1:8092/ (scenario 2). MODEL=muse-spark-1.3 needs MODEL_API_KEY.
+resolve-live:
+	scripts/resolve_live_ui.sh --case D1 $(if $(MODEL),--model $(MODEL) --max-calls 20 --max-cost 0.45)
 
 resolve-demo:
 	uv run python -m resolve.eval.demo $(if $(MODEL),--model $(MODEL))

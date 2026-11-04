@@ -431,7 +431,7 @@ Tests after the changes: 115 passed (38 new), ruff clean, no-sleep check clean.
 
 ## Evaluation eval-v1 (task set B, Wed Oct 28, 14:40–17:50 ET; `runs/eval-v1`)
 
-Frozen at `81c912f`, recorded in `docs/FREEZE.md` (`1d79325`) before the first trial. 18 of 18 trials valid, every
+Frozen at `81c912f`, recorded in `docs/FREEZE.md` (`1d79325`; in git history) before the first trial. 18 of 18 trials valid, every
 bundle's SHA256SUMS intact. Re-analysis with the merged analyzer (metrics_version 2, `make verify`-style,
 `runs/eval-v1/reanalysis_v2.log`) reproduced every saved verdict exactly. Model spend $19.81 of a $20 cap
 (cumulative $33.85). Pacing: full_history, 0.4 goals/s to 490 s (209 goals per trial), observation 300 s.

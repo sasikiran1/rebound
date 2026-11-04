@@ -1,7 +1,7 @@
 # Local-model recovery campaign protocol (ollama-recovery-v1)
 
 Written 2026-10-28 before any campaign trial. Frozen by the commit that adds the frozen specs file
-(`manifests/ollama/blocks_v1.specs`); that commit's hash is recorded in `docs/OLLAMA_FREEZE.md` before block 1.
+(`manifests/ollama/blocks_v1.specs`); that commit's hash is recorded in `docs/OLLAMA_FREEZE.md` before block 1 (commit `1b676b3`; in git history).
 Nothing below changes after the freeze. A change means a new configuration, reported separately.
 
 ## Question

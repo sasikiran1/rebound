@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import random
 import resource
 import time
@@ -206,7 +205,3 @@ class RunnerHealth:
 def _cpu_s() -> float:
     ru = resource.getrusage(resource.RUSAGE_SELF)
     return ru.ru_utime + ru.ru_stime
-
-
-def utc_now() -> str:
-    return dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
