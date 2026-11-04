@@ -74,12 +74,11 @@ class Resolve:
                     "Would a date before then work, or should we leave your appointment as it is?")
             await self.store.set_state(rid, "needs_input", question={"kind": "horizon", "text": text,
                                                                      "candidates": []},
-                                       questions_asked=req["questions_asked"] + 1)
-            await self.store.add_turn(rid, "assistant", text, "horizon")
+                                       questions_asked=req["questions_asked"] + 1, turn=(text, "horizon"))
             return {"state": "needs_input", "kind": "horizon"}
-        await self.store.set_state(rid, "unresolved", detail="; ".join(out.problems)[:1000])
-        await self.store.add_turn(rid, "assistant", "I couldn't turn that into a booking I'm sure you'd approve, "
-                                  "so I haven't changed anything. A colleague will follow up.", "unresolved")
+        await self.store.set_state(rid, "unresolved", detail="; ".join(out.problems)[:1000],
+                                   turn=("I couldn't turn that into a booking I'm sure you'd approve, so I haven't "
+                                         "changed anything. A colleague will follow up.", "unresolved"))
         return {"state": "unresolved", "problems": out.problems}
 
     async def customer_says(self, request_id: str, text: str) -> dict:
@@ -103,9 +102,8 @@ class Resolve:
         await self.store.event(request_id, "revise", attempts=out.attempts, problems=out.problems,
                                decision=out.decision, intent=out.value)
         if out.decision == "declined":
-            await self.store.set_state(request_id, "unresolved", detail="customer declined")
-            await self.store.add_turn(request_id, "assistant", "Okay. I've left your appointment as it is.",
-                                      "unresolved")
+            await self.store.set_state(request_id, "unresolved", detail="customer declined",
+                                       turn=("Okay. I've left your appointment as it is.", "unresolved"))
             return {"state": "unresolved", "declined": True}
         if out.value is None:
             if out.horizon_only:
@@ -115,8 +113,8 @@ class Resolve:
                 return await self._unusable(request_id, out)
             text_back = "Sorry, I couldn't apply that safely. Could you say it another way?"
             await self.store.set_state(request_id, "needs_input", question=req["question"] or {
-                "kind": "repeat", "text": text_back, "candidates": []}, questions_asked=req["questions_asked"] + 1)
-            await self.store.add_turn(request_id, "assistant", text_back, "repeat")
+                "kind": "repeat", "text": text_back, "candidates": []}, questions_asked=req["questions_asked"] + 1,
+                turn=(text_back, "repeat"))
             return {"state": "needs_input", "problems": out.problems}
         delta = I.diff(current, out.value)
         v = await self.store.approve(request_id, out.value, {"turn": n, "by": "customer", "text": text,

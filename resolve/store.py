@@ -49,6 +49,25 @@ CREATE TABLE IF NOT EXISTS resolve.requests (
     updated_at      timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 ALTER TABLE resolve.requests ADD COLUMN IF NOT EXISTS confirm boolean NOT NULL DEFAULT false;
+-- Backoff: a released request is not claimed by the service loop before not_before (Retry-After or exponential).
+ALTER TABLE resolve.requests ADD COLUMN IF NOT EXISTS not_before timestamptz;
+ALTER TABLE resolve.requests ADD COLUMN IF NOT EXISTS retries integer NOT NULL DEFAULT 0;
+-- Fencing: every claim increments the generation; a worker's writes count only with the generation it claimed.
+ALTER TABLE resolve.requests ADD COLUMN IF NOT EXISTS lease_gen integer NOT NULL DEFAULT 0;
+-- FieldDesk key fencing (see backend/fielddesk/app.py): lets the worker void a superseded, unconfirmed write.
+CREATE TABLE IF NOT EXISTS public.idempotency_keys (
+    key     text PRIMARY KEY,
+    outcome text NOT NULL CHECK (outcome IN ('applied', 'voided')),
+    at      timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fielddesk') THEN
+        GRANT SELECT, INSERT ON public.idempotency_keys TO fielddesk;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oracle_ro') THEN
+        GRANT SELECT ON public.idempotency_keys TO oracle_ro;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS resolve.versions (
     request_id  text    NOT NULL REFERENCES resolve.requests (request_id),
     version     integer NOT NULL,
@@ -171,18 +190,21 @@ class Store:
         """Append a turn. An assistant turn the customer must see (a question, a confirmation, an outcome) also
         queues its notification in the same transaction, so a question never exists without its message."""
         async with self.pool.acquire() as c, c.transaction():
-            n = await c.fetchval(
-                "INSERT INTO resolve.turns (request_id, n, role, text, kind) VALUES ($1, "
-                "(SELECT coalesce(max(n), -1) + 1 FROM resolve.turns WHERE request_id = $1), $2, $3, $4) RETURNING n",
-                request_id, role, text, kind)
-            if role == "assistant" and kind in NOTIFY:
-                customer = await c.fetchval("SELECT customer_id FROM resolve.requests WHERE request_id = $1",
-                                            request_id)
-                await c.execute(
-                    "INSERT INTO resolve.notifications (request_id, turn_n, kind, recipient, subject, body) "
-                    "VALUES ($1, $2, $3, $4, $5, $6)",
-                    request_id, n, kind, f"customer-{customer}@example.test", NOTIFY[kind], text)
-            return n
+            return await self._turn(c, request_id, role, text, kind)
+
+    @staticmethod
+    async def _turn(c, request_id: str, role: str, text: str, kind: str | None) -> int:
+        n = await c.fetchval(
+            "INSERT INTO resolve.turns (request_id, n, role, text, kind) VALUES ($1, "
+            "(SELECT coalesce(max(n), -1) + 1 FROM resolve.turns WHERE request_id = $1), $2, $3, $4) RETURNING n",
+            request_id, role, text, kind)
+        if role == "assistant" and kind in NOTIFY:
+            customer = await c.fetchval("SELECT customer_id FROM resolve.requests WHERE request_id = $1", request_id)
+            await c.execute(
+                "INSERT INTO resolve.notifications (request_id, turn_n, kind, recipient, subject, body) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                request_id, n, kind, f"customer-{customer}@example.test", NOTIFY[kind], text)
+        return n
 
     async def notifications(self, request_id: str) -> list[dict]:
         rows = await self.pool.fetch("SELECT * FROM resolve.notifications WHERE request_id = $1 ORDER BY id",
@@ -221,50 +243,78 @@ class Store:
                             "VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb)",
                             request_id, v, j(intent), j(approved_by), j(diff))
             await c.execute("UPDATE resolve.requests SET version = $2, state = 'ready', question = NULL, "
-                            "updated_at = clock_timestamp() WHERE request_id = $1", request_id, v)
+                            "not_before = NULL, retries = 0, updated_at = clock_timestamp() WHERE request_id = $1",
+                            request_id, v)
             return v
 
-    async def set_state(self, request_id: str, state: str, *, owner: str | None = None, **fields) -> bool:
-        """Move to `state`. With `owner`, only while that worker still holds the lease (a reclaimed lease wins).
-        Completing a request also queues its calendar sync in the same transaction."""
+    async def set_state(self, request_id: str, state: str, *, owner: str | None = None, gen: int | None = None,
+                        turn: tuple[str, str] | None = None, delay_s: float | None = None, **fields) -> bool:
+        """Move to `state`. With `owner` (and `gen`), only while that worker still holds that lease: a reclaimed
+        lease wins. `turn` = (text, kind): the assistant turn (and its notification) is written in the same
+        transaction, so a question or an outcome never exists without its message. `delay_s`: the service loop does
+        not claim the request again before then. Completing a request also queues its calendar sync."""
         sets = ["state = $2", "updated_at = clock_timestamp()"]
         args = [request_id, state]
         for k, v in fields.items():
             args.append(j(v) if k == "question" else v)
             sets.append(f"{k} = ${len(args)}" + ("::jsonb" if k == "question" else ""))
+        if delay_s is not None:
+            args.append(float(delay_s))
+            sets += [f"not_before = clock_timestamp() + make_interval(secs => ${len(args)})", "retries = retries + 1"]
+        elif state != "claimed":
+            sets += ["not_before = NULL", "retries = 0"]
         if state != "claimed":
             sets += ["lease_owner = NULL", "lease_until = NULL"]
         where = "request_id = $1"
         if owner is not None:
             args.append(owner)
             where += f" AND state = 'claimed' AND lease_owner = ${len(args)}"
+        if gen is not None:
+            args.append(gen)
+            where += f" AND lease_gen = ${len(args)}"
         async with self.pool.acquire() as c, c.transaction():
             res = await c.execute(f"UPDATE resolve.requests SET {', '.join(sets)} WHERE {where}", *args)
-            if state == "completed" and res.endswith(" 1"):
+            ok = res.endswith(" 1")
+            if ok and turn is not None:
+                await self._turn(c, request_id, "assistant", turn[0], turn[1])
+            if state == "completed" and ok:
                 await c.execute("INSERT INTO resolve.calendar_sync (request_id) VALUES ($1) ON CONFLICT DO NOTHING",
                                 request_id)
-        return res.endswith(" 1")
+        return ok
 
-    async def claim(self, owner: str, lease_s: float, request_id: str | None = None) -> dict | None:
-        """Claim one ready request, or one whose worker's lease expired (it died mid-execution)."""
+    async def claim(self, owner: str, lease_s: float, request_id: str | None = None,
+                    honor_backoff: bool = True) -> dict | None:
+        """Claim one ready request, or one whose worker's lease expired (it died mid-execution). Each claim starts a
+        new lease generation. The service loop honors `not_before`; a run aimed at one request (a check, the demo)
+        may pass honor_backoff=False and paces itself."""
         extra = "AND request_id = $3" if request_id else ""
+        wait = "AND (not_before IS NULL OR not_before <= clock_timestamp())" if honor_backoff else ""
         args = [owner, lease_s] + ([request_id] if request_id else [])
         row = await self.pool.fetchrow(
             f"""
-            UPDATE resolve.requests SET state = 'claimed', lease_owner = $1,
+            UPDATE resolve.requests SET state = 'claimed', lease_owner = $1, lease_gen = lease_gen + 1,
                    lease_until = clock_timestamp() + make_interval(secs => $2), updated_at = clock_timestamp()
             WHERE request_id = (
                 SELECT request_id FROM resolve.requests
-                WHERE (state = 'ready' OR (state = 'claimed' AND lease_until < clock_timestamp())) {extra}
+                WHERE ((state = 'ready' {wait}) OR (state = 'claimed' AND lease_until < clock_timestamp())) {extra}
                 ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1)
             RETURNING *
             """, *args)
         return row_dict(row)
 
+    async def renew(self, request_id: str, owner: str, gen: int, lease_s: float) -> bool:
+        """Extend a lease that is still held and unexpired; False means another worker may own the request now."""
+        res = await self.pool.execute(
+            "UPDATE resolve.requests SET lease_until = clock_timestamp() + make_interval(secs => $4) "
+            "WHERE request_id = $1 AND state = 'claimed' AND lease_owner = $2 AND lease_gen = $3 "
+            "AND lease_until > clock_timestamp()", request_id, owner, gen, lease_s)
+        return res.endswith(" 1")
+
     async def record_attempt(self, request_id: str, owner: str, slot_id: int | None, key: str | None,
-                             state: str | None) -> bool:
+                             state: str | None, gen: int | None = None) -> bool:
         res = await self.pool.execute(
             "UPDATE resolve.requests SET attempt_slot = $3, attempt_key = $4, attempt_state = $5, "
-            "updated_at = clock_timestamp() WHERE request_id = $1 AND state = 'claimed' AND lease_owner = $2",
-            request_id, owner, slot_id, key, state)
+            "updated_at = clock_timestamp() WHERE request_id = $1 AND state = 'claimed' AND lease_owner = $2 "
+            "AND ($6::integer IS NULL OR lease_gen = $6)",
+            request_id, owner, slot_id, key, state, gen)
         return res.endswith(" 1")

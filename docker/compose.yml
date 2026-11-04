@@ -100,7 +100,7 @@ services:
       FIELDDESK_DB: ${FIELDDESK_DB:-fielddesk_trial}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD:-oracle}
-    command: ["python", "-m", "resolve.worker", "--owner", "worker-compose"]
+    command: ["python", "-m", "resolve.worker"]  # owner = host + pid: unique per replica
     # Questions and outcomes go out by SMTP. Locally to the test inbox below; a real provider is a change of
     # RESOLVE_SMTP_HOST / PORT / USER / PASSWORD.
     stop_grace_period: 15s  # SIGTERM: finish the request in hand, then exit

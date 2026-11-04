@@ -79,7 +79,7 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 
 | Failure | What happens | Tested by |
 |---|---|---|
-| FieldDesk slow or down (search or write times out, 5xx) | Request released back to `ready`; a write in doubt keeps its attempt record | demo outage; `lost_ack` |
+| FieldDesk slow or down (search or write times out, 5xx) | Request released back to `ready` with a backoff (Retry-After, or 1 s doubling to 30 s with jitter); a write in doubt keeps its attempt record | demo outage; `lost_ack`; `backoff` |
 | Worker dies after claiming | Lease expires; another worker claims and runs from the start | `crash_after_claim` |
 | Worker dies after recording the attempt, before sending | Next claim resends the recorded slot with the same key; it commits once | `crash_after_record` |
 | Worker dies after the write committed | Next claim resends with the same key; FieldDesk returns the original change (`replayed`) | `crash_after_send`, demo |
@@ -95,9 +95,15 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | Database link silent during the search | Timeout; request released; booked once the link is back | `fault_shapes` |
 | Mail server refuses or is down | The message stays queued with its error; retried with backoff (5 s, 10 s, ...); failed after 6 attempts | `notifications` |
 | Calendar server down when the booking completes | Booking unaffected; the calendar sync stays queued and catches up; stale copies in other technicians' calendars removed | `calendar` |
+| Customer corrects the request while a write is in doubt | The old version's attempt is never resent: its key is voided at FieldDesk (reports the change if it committed; otherwise a late copy is refused with `key_voided`); then the new version runs | `superseded_attempt`, `superseded_committed` |
+| Worker pauses past its lease (GC, CPU starvation) | Another worker claims a new lease generation; the paused worker's renew before the POST fails, so it never sends, and its writes no longer match the generation | `stale_worker` |
+| Crash between a state change and the customer message | Not possible: state, assistant turn and notification are one transaction | `atomic_question` |
 
-Guarantee, as tested: with one worker holding a request at a time and FieldDesk's idempotency-key table, every
-injected crash point ends with at most one applied change. This is not a general exactly-once claim.
+Guarantee, as tested: with FieldDesk's idempotency keys and key fencing, every injected crash point ends with at most
+one applied change, and a write superseded by a newer approved version is never resent and cannot land late. This
+is duplicate suppression and recovery under the tested conditions, not a general exactly-once claim. Not covered:
+multi-tenant isolation, a shared spending limit across processes, failure of the PostgreSQL instance itself, and
+recovery of notifications or calendar syncs that exhausted their retries (they stay `failed` for an operator).
 
 ## Deployment
 
@@ -159,4 +165,5 @@ Short records in [decisions/](decisions/):
 [0004 confirm before booking](decisions/0004-confirm-before-booking.md),
 [0005 retries in middleware, not a model tool](decisions/0005-retries-in-middleware.md),
 [0006 notifications from a transactional queue](decisions/0006-notifications.md),
-[0007 technicians' calendars mirrored over CalDAV](decisions/0007-calendar-sync.md).
+[0007 technicians' calendars mirrored over CalDAV](decisions/0007-calendar-sync.md),
+[0008 key fencing, lease generations, backoff and atomic customer messages](decisions/0008-fencing-and-atomic-messages.md).

@@ -2,19 +2,30 @@
 
 For each claimed request:
   1. Reconcile first. If an earlier attempt was sent but its answer never recorded (the worker died, or the reply
-     was lost), resend the *same* slot with the *same* idempotency key. FieldDesk returns the original change for a
-     key it has already committed (`replayed: true`) and writes nothing, so a committed booking is confirmed rather
-     than repeated; a 409 for that slot means the key never committed (else it would replay), so the search runs.
+     was lost), settle it before anything else:
+     - the attempt belongs to the version now approved: resend the *same* slot with the *same* idempotency key.
+       FieldDesk returns the original change for a key it has already committed (`replayed: true`) and writes
+       nothing, so a committed booking is confirmed rather than repeated; a 409 for that slot means the key never
+       committed (else it would replay), so the search runs.
+     - the customer approved a newer version since: the old write is no longer authorized and is never resent.
+       The worker voids its key (FieldDesk POST /idempotency/{key}/void): if it had committed, that change is
+       reported; if not, the key is voided, so a copy still in flight can never commit. Then the new version runs.
   2. Search every open slot in the horizon (all pages) and decide (evaluate.decide).
-  3. book: record the attempt (slot, key, `sending`) durably, then POST. permission/clarify/no_options: store the
-     question and hand the request back to the customer (needs_input).
+  3. book: record the attempt (slot, key, `sending`) durably, renew the lease (a worker that lost it does not send),
+     then POST. permission/clarify/no_options: store the question and its message in one transaction and hand the
+     request back to the customer (needs_input).
 The idempotency key is `resolve:<request_id>:v<version>`: stable per request and approved version, not a hash of the
 intent (two different requests may have identical content). Approval of a new version is refused while a request
 is claimed, so the version being executed cannot change underneath the worker.
 
-Guarantee, as tested: with one worker at a time per request, a crash at any of the injected points (after claim,
-after recording the attempt, after the POST returned) leads to at most one applied change. It relies on FieldDesk's
-idempotency-key table; it is not a general exactly-once claim.
+Leases: every claim starts a new generation; the worker's writes count only for the owner and generation it claimed,
+so a worker that paused past its lease cannot overwrite the work of the one that took over. Owners are unique per
+process (host and pid). A request released after a failure is not claimed by the service loop before `not_before`:
+the server's Retry-After when it sent one, else exponential backoff with jitter (1 s doubling to 30 s).
+
+Guarantee, as tested: a crash at any of the injected points (after claim, after recording the attempt, after the
+POST returned) leads to at most one applied change, and a write superseded by a newer approved version is never
+resent and cannot land late. It relies on FieldDesk's idempotency keys; it is not a general exactly-once claim.
 """
 
 from __future__ import annotations
@@ -22,6 +33,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import os
+import random
+import socket
 
 from resolve.api import ApiError, FieldDesk
 from resolve.evaluate import decide, describe
@@ -29,6 +42,17 @@ from resolve.store import Store
 
 MAX_QUESTIONS = 3
 CRASH_POINTS = ("after_claim", "after_record", "after_send")
+BACKOFF_BASE_S, BACKOFF_MAX_S = 1.0, 30.0
+
+
+def default_owner() -> str:
+    return f"worker-{socket.gethostname()}-{os.getpid()}"
+
+
+def backoff_s(retries: int, retry_after: float | None) -> float:
+    if retry_after is not None and retry_after > 0:
+        return min(retry_after, BACKOFF_MAX_S)
+    return min(BACKOFF_MAX_S, BACKOFF_BASE_S * 2 ** retries) * random.uniform(0.8, 1.2)
 
 
 def _exit(point: str) -> None:
@@ -36,9 +60,9 @@ def _exit(point: str) -> None:
 
 
 class Worker:
-    def __init__(self, store: Store, api: FieldDesk, owner: str = "worker-1", lease_s: float = 8.0,
+    def __init__(self, store: Store, api: FieldDesk, owner: str | None = None, lease_s: float = 8.0,
                  crash_at: str | None = None, crash=_exit, before_post=None):
-        self.store, self.api, self.owner, self.lease_s = store, api, owner, lease_s
+        self.store, self.api, self.owner, self.lease_s = store, api, owner or default_owner(), lease_s
         self.crash_at = crash_at or os.environ.get("RESOLVE_CRASH_AT") or None
         self.crash = crash
         self.before_post = before_post
@@ -47,8 +71,11 @@ class Worker:
         if self.crash_at == point:
             self.crash(point)
 
-    async def run_once(self, request_id: str | None = None) -> dict | None:
-        req = await self.store.claim(self.owner, self.lease_s, request_id)
+    async def run_once(self, request_id: str | None = None, honor_backoff: bool | None = None) -> dict | None:
+        """Claim and process one request. The service loop (no request id) honors backoff; a run aimed at one
+        request paces itself unless honor_backoff=True."""
+        honor = (request_id is None) if honor_backoff is None else honor_backoff
+        req = await self.store.claim(self.owner, self.lease_s, request_id, honor_backoff=honor)
         if req is None:
             return None
         return await self.process(req)
@@ -67,44 +94,67 @@ class Worker:
                 await self.store.event(req["request_id"], "worker.reconcile_same_slot", attempt=n + 1)
                 await asyncio.sleep(0.5)
 
-    async def _release(self, rid: str, reason: str, **fields) -> dict:
-        await self.store.set_state(rid, "ready", owner=self.owner, **fields)
-        await self.store.event(rid, "worker.retry_later", owner=self.owner, reason=reason)
-        return {"request_id": rid, "result": "retry_later", "reason": reason}
+    async def _release(self, req: dict, reason: str, exc: ApiError | None = None, **fields) -> dict:
+        rid = req["request_id"]
+        delay = backoff_s(req.get("retries") or 0, exc.retry_after if exc is not None else None)
+        await self.store.set_state(rid, "ready", owner=self.owner, gen=req["lease_gen"], delay_s=delay, **fields)
+        await self.store.event(rid, "worker.retry_later", owner=self.owner, reason=reason,
+                               retry_in_s=round(delay, 2))
+        return {"request_id": rid, "result": "retry_later", "reason": reason, "retry_in_s": round(delay, 2)}
 
     async def _finish(self, req: dict, res: dict, slot: dict | None, slot_id: int, how: str) -> dict:
         rid = req["request_id"]
-        ok = await self.store.set_state(rid, "completed", owner=self.owner, change_id=res["change_id"],
-                                        booked_slot=slot_id, attempt_state="acked",
-                                        detail=f"{how}; replayed={res.get('replayed')}")
+        names = {t["technician_id"]: t["name"] for t in req["facts"]["technicians"]}
+        where = describe(slot, names) if slot else f"slot {slot_id}"
+        ok = await self.store.set_state(rid, "completed", owner=self.owner, gen=req["lease_gen"],
+                                        change_id=res["change_id"], booked_slot=slot_id, attempt_state="acked",
+                                        detail=f"{how}; replayed={res.get('replayed')}",
+                                        turn=(f"Done. Your appointment is now {where}.", "completed"))
         await self.store.event(rid, "worker.completed", owner=self.owner, version=req["version"],
-                               change_id=res["change_id"], slot_id=slot_id, replayed=res.get("replayed"), how=how)
-        if ok:
-            names = {t["technician_id"]: t["name"] for t in req["facts"]["technicians"]}
-            where = describe(slot, names) if slot else f"slot {slot_id}"
-            await self.store.add_turn(rid, "assistant", f"Done. Your appointment is now {where}.", "completed")
-        return {"request_id": rid, "result": "completed", "change_id": res["change_id"], "slot_id": slot_id,
-                "replayed": res.get("replayed"), "how": how}
+                               change_id=res["change_id"], slot_id=slot_id, replayed=res.get("replayed"), how=how,
+                               recorded=ok)
+        return {"request_id": rid, "result": "completed" if ok else "lease_lost", "change_id": res["change_id"],
+                "slot_id": slot_id, "replayed": res.get("replayed"), "how": how}
+
+    async def _settle_superseded(self, req: dict) -> dict | None:
+        """The unconfirmed attempt belongs to an older version: void its key instead of resending it. Returns a
+        result to stop with, or None to go on with the current version."""
+        rid = req["request_id"]
+        try:
+            res = await self.api.void_key(req["attempt_key"])
+        except ApiError as exc:
+            return await self._release(req, f"settle superseded attempt: {exc.status}", exc)
+        await self.store.event(rid, "worker.superseded_attempt", outcome=res["outcome"], key=req["attempt_key"],
+                               slot_id=req["attempt_slot"], change_id=(res.get("change") or {}).get("change_id"))
+        if not await self.store.record_attempt(rid, self.owner, None, None, None, gen=req["lease_gen"]):
+            return {"request_id": rid, "result": "lease_lost"}
+        return None
 
     async def process(self, req: dict) -> dict:
         rid, version = req["request_id"], req["version"]
         key = f"resolve:{rid}:v{version}"
-        await self.store.event(rid, "worker.claimed", owner=self.owner, version=version,
+        gen = req["lease_gen"]
+        await self.store.event(rid, "worker.claimed", owner=self.owner, version=version, gen=gen,
                                pending_attempt=req["attempt_state"])
         self._maybe_crash("after_claim")
         intent = await self.store.intent(rid, version)
         facts = req["facts"]
         names = {t["technician_id"]: t["name"] for t in facts["technicians"]}
 
-        if req["attempt_state"] == "sending":  # 1. reconcile an uncertain earlier attempt before anything else
+        if req["attempt_state"] == "sending" and req["attempt_key"] != key:  # 1a. superseded: void, never resend
+            stop = await self._settle_superseded(req)
+            if stop is not None:
+                return stop
+        elif req["attempt_state"] == "sending":  # 1b. reconcile an uncertain attempt of this version
             try:
                 res = await self._resend(req)
             except ApiError as exc:
                 if exc.uncertain or exc.body.get("type") == "same_slot":
-                    return await self._release(rid, f"reconcile: {exc.status} {exc.body.get('type', '')}".strip())
+                    return await self._release(req, f"reconcile: {exc.status} {exc.body.get('type', '')}".strip(),
+                                               exc)
                 await self.store.event(rid, "worker.reconciled", outcome="not_committed", error=exc.status,
                                        slot_id=req["attempt_slot"])
-                if not await self.store.record_attempt(rid, self.owner, None, None, None):
+                if not await self.store.record_attempt(rid, self.owner, None, None, None, gen=gen):
                     return {"request_id": rid, "result": "lease_lost"}
             else:
                 await self.store.event(rid, "worker.reconciled", outcome="committed", slot_id=req["attempt_slot"],
@@ -123,7 +173,7 @@ class Worker:
                 slots = await self.api.search_all(req["service"], today.isoformat(), last.isoformat(),
                                                   [req["region"]])
             except ApiError as exc:
-                return await self._release(rid, f"search: {exc.status}")
+                return await self._release(req, f"search: {exc.status}", exc)
             d = decide(intent, slots, names)
             await self.store.event(rid, "worker.decided", version=version, decision=d.kind, reason=d.reason,
                                    open_slots=len(slots), slot_id=d.slot and d.slot["slot_id"],
@@ -136,41 +186,46 @@ class Worker:
                               "appointment stays as it is until you say yes.")
                 return await self._ask(req, d)
             slot = d.slot
-            if not await self.store.record_attempt(rid, self.owner, slot["slot_id"], key, "sending"):
+            if not await self.store.record_attempt(rid, self.owner, slot["slot_id"], key, "sending", gen=gen):
                 return {"request_id": rid, "result": "lease_lost"}
             self._maybe_crash("after_record")
             if self.before_post is not None:  # fault checks: inject a network fault exactly around the write
                 await self.before_post(req, slot)
+            if not await self.store.renew(rid, self.owner, gen, self.lease_s):  # fenced: never send without a lease
+                await self.store.event(rid, "worker.lease_lost_before_send", owner=self.owner, gen=gen,
+                                       slot_id=slot["slot_id"])
+                return {"request_id": rid, "result": "lease_lost"}
             try:
                 res = await self.api.reschedule(req["appointment_id"], req["customer_id"], slot["slot_id"], key)
             except ApiError as exc:
                 if exc.uncertain:  # may have committed: keep the attempt; the next claim reconciles it
-                    return await self._release(rid, f"reschedule: {exc.status}")
-                if exc.http_status == 409:
+                    return await self._release(req, f"reschedule: {exc.status}", exc)
+                if exc.http_status == 409 and exc.body.get("type") != "key_voided":
                     await self.store.event(rid, "worker.slot_taken", slot_id=slot["slot_id"])
-                    await self.store.record_attempt(rid, self.owner, None, None, None)
+                    await self.store.record_attempt(rid, self.owner, None, None, None, gen=gen)
                     continue
-                await self.store.set_state(rid, "unresolved", owner=self.owner,
+                await self.store.set_state(rid, "unresolved", owner=self.owner, gen=gen,
                                            detail=f"reschedule refused: {exc.status} {exc.message[:200]}")
                 await self.store.event(rid, "worker.refused", error=exc.status, message=exc.message[:200])
                 return {"request_id": rid, "result": "unresolved", "reason": exc.status}
             self._maybe_crash("after_send")
             return await self._finish(req, res, slot, slot["slot_id"], "booked")
-        return await self._release(rid, "slots kept being taken")
+        return await self._release(req, "slots kept being taken")
 
     async def _ask(self, req: dict, d) -> dict:
         rid = req["request_id"]
         if req["questions_asked"] >= MAX_QUESTIONS:
-            await self.store.set_state(rid, "unresolved", owner=self.owner,
-                                       detail=f"no agreement after {MAX_QUESTIONS} questions")
-            await self.store.add_turn(rid, "assistant", "I couldn't find a time that works, so I've left your "
-                                      "appointment as it is. A colleague will follow up.", "unresolved")
+            await self.store.set_state(rid, "unresolved", owner=self.owner, gen=req["lease_gen"],
+                                       detail=f"no agreement after {MAX_QUESTIONS} questions",
+                                       turn=("I couldn't find a time that works, so I've left your appointment as it "
+                                             "is. A colleague will follow up.", "unresolved"))
             return {"request_id": rid, "result": "unresolved", "reason": "question limit"}
         question = {"kind": d.kind, "text": d.question, "candidates": d.candidates,
                     "unclear_index": d.unclear_index, "version": req["version"]}
-        await self.store.set_state(rid, "needs_input", owner=self.owner, question=question,
-                                   questions_asked=req["questions_asked"] + 1)
-        await self.store.add_turn(rid, "assistant", d.question, d.kind)
+        ok = await self.store.set_state(rid, "needs_input", owner=self.owner, gen=req["lease_gen"], question=question,
+                                        questions_asked=req["questions_asked"] + 1, turn=(d.question, d.kind))
+        if not ok:
+            return {"request_id": rid, "result": "lease_lost"}
         return {"request_id": rid, "result": "needs_input", "kind": d.kind, "question": d.question,
                 "candidates": [c["slot_id"] for c in d.candidates]}
 
@@ -189,7 +244,7 @@ async def _main() -> None:
     from harness import settings
     ap = argparse.ArgumentParser()
     ap.add_argument("--request", default=None)
-    ap.add_argument("--owner", default=f"worker-{os.getpid()}")
+    ap.add_argument("--owner", default=None)
     ap.add_argument("--crash-at", choices=CRASH_POINTS)
     ap.add_argument("--lease-s", type=float, default=8.0)
     ap.add_argument("--poll-s", type=float, default=1.0)
@@ -210,38 +265,38 @@ async def _main() -> None:
             from resolve.notify import Notifier
             notifier = Notifier.from_env(store)  # None unless RESOLVE_SMTP_HOST is set
             calendar = CalendarSync.from_env(store, api)  # None unless RESOLVE_CALDAV_URL is set
-            print(json.dumps({"owner": a.owner, "mode": "service", "started": True,
+            print(json.dumps({"owner": worker.owner, "mode": "service", "started": True,
                               "notifications": bool(notifier), "calendar": bool(calendar)}), flush=True)
             while not stop.is_set() and (end is None or loop.time() < end):
                 res = await worker.run_once()
                 if notifier is not None:
                     sent = await notifier.drain()
                     if any(sent.values()):
-                        print(json.dumps({"owner": a.owner, "notifications": sent}), flush=True)
+                        print(json.dumps({"owner": worker.owner, "notifications": sent}), flush=True)
                 if calendar is not None:
                     synced = await calendar.drain()
                     if any(synced.values()):
-                        print(json.dumps({"owner": a.owner, "calendar": synced}), flush=True)
+                        print(json.dumps({"owner": worker.owner, "calendar": synced}), flush=True)
                 if res is not None:
-                    print(json.dumps({"owner": a.owner, **res}, default=str), flush=True)
+                    print(json.dumps({"owner": worker.owner, **res}, default=str), flush=True)
                     continue  # more work may be waiting
                 try:
                     await asyncio.wait_for(stop.wait(), a.poll_s)
                 except TimeoutError:
                     pass
-            print(json.dumps({"owner": a.owner, "mode": "service", "stopped": True}), flush=True)
+            print(json.dumps({"owner": worker.owner, "mode": "service", "stopped": True}), flush=True)
             if calendar is not None:
                 await calendar.close()
             return
         while end is None or loop.time() < end:
             req = await store.get(a.request)
             if req is None or req["state"] in ("completed", "unresolved", "needs_input"):
-                print(json.dumps({"request_id": a.request, "state": req and req["state"], "owner": a.owner}),
+                print(json.dumps({"request_id": a.request, "state": req and req["state"], "owner": worker.owner}),
                       flush=True)
                 break
             res = await worker.run_once(a.request)
             if res is not None:
-                print(json.dumps({"owner": a.owner, **res}, default=str), flush=True)
+                print(json.dumps({"owner": worker.owner, **res}, default=str), flush=True)
             await asyncio.sleep(a.poll_s)
     finally:
         await api.close()
