@@ -11,3 +11,5 @@ __pycache__/
 *.egg-info/
 .ua/
 graphify-out/
+# Written by `make seed` alongside the template database; not used by Resolve.
+data/tasks/

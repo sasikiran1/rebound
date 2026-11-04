@@ -1,2 +1,0 @@
-manifests/ollama/recovery_gemma4_A.yaml agent off 0 pilot-gemma4-B
-manifests/ollama/recovery_gemma4_A.yaml agent on 0 pilot-gemma4-D
