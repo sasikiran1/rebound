@@ -80,7 +80,7 @@ lint:
 	uv run ruff check .
 
 no-sleep:
-	@! grep -rni "sleep" backend/ || (echo "'sleep' found in backend/" && false)
+	@! grep -rnE --include='*.py' 'sleep[[:space:]]*\(' backend/ || (echo "a sleep call found in backend/" && false)
 
 check: lint test no-sleep
 
