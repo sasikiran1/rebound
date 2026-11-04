@@ -22,3 +22,56 @@ reads it back over CalDAV.
 
 If the live run stalls, say so and switch to the recorded run `runs/resolve/demo/demo-muse-1`. Never present recorded
 data as live.
+
+## Live flow screen (browser)
+
+`scripts/resolve_live_ui.sh --model muse-spark-1.3`, then open `http://127.0.0.1:8092/` (one tab only: every open
+tab drives the same session). It is the live console below with a page on top, written for someone who has never
+heard of Rebound: a "What is Rebound?" intro (the `?` button), a narrator bar saying what is happening in plain
+words, a scoreboard comparing the run without Rebound, the run with Rebound and what the customer actually wanted,
+and the steps in plain language with the ones Rebound performs tagged REBOUND (crossed out in the run without it).
+Below that: the conversation and the quoted rules, the technicians' calendars read from FieldDesk's database with the
+CalDAV calendar marked `CAL`, the database check (SQL) and the engineer log.
+
+Buttons: scenario, **✗ Without Rebound** / **✓ With Rebound** (each re-seeds the same world), **▶ Play scenario**
+(runs the scenario's plan: the problems it injects, the case file's customer lines, and a correction instead of a yes
+when the proposed slot is not one the case file authorizes), **Booking system down** (Toxiproxy), **Someone takes the
+slot** (another customer books the contested slot), **Crash after booking** (the next booking runs in a separate
+worker process that exits right after its POST; the page's worker waits out the lease and reconciles with the same
+key). Chips under the input fill in the case file's lines; anything typed is a real customer message.
+
+Failure, then fix (scenario 1, case H15):
+1. **✗ Without Rebound**, send "Keep the same time of day as my current booking, just move it to Friday." It books at once.
+   On Muse, Nov 3: read as "before 12:00", booked Fri 09:00 with Mila; the slot turned red, Mila's CalDAV calendar
+   moved to Fri 09:00, SQL check UNAUTHORIZED BOOKING ($0.009, 1 call).
+2. **✓ With Rebound**, the same message. It proposes a slot and asks; if it proposes Fri 09:00, answer "No, keep 10:30 like
+   my current booking. Any technician is fine."; it proposes Fri 10:30 with Ken (purple, waiting for yes).
+3. **Booking system down**, then "Yes, please book it.": the worker and API steps turn amber and wait; nothing is written.
+   Click it again: booked, green, Ken's calendar, SQL check CORRECT.
+
+Everything at once (scenario 2, case D1; **▶ Play scenario** does all of this): **✓ With Rebound**, **Booking system
+down**, send the message; while it waits press **Someone takes the slot** (Fri 15:30 Dana turns amber); click
+**Booking system down** again to restore it. Nothing authorized is left, so it asks; answer "Monday is okay, but not
+before four."; it proposes Mon 16:30 with Alex. Press **Crash after booking**, then "Yes, please book it.". Rehearsed twice on the local model, Nov 3: the worker process died after its POST (1 change row, answer not
+recorded), the page's worker reclaimed the expired lease, resent the same key, got `replayed`, no second row; Alex's
+calendar moved to Mon 16:30; SQL check CORRECT.
+
+Keep the `resolve-worker` container stopped while the screen runs (the script stops it), or it takes the requests.
+Start it again afterwards: `docker compose -f docker/compose.yml --profile resolve start resolve-worker`.
+
+## Live console (you type as the customer)
+
+`scripts/resolve_live.sh --case H15 --model muse-spark-1.3` (Thunderbird subscribed to the technicians' calendars
+beside it; click sync after each booking). Commands: `/naive`, `/resolve` (each re-seeds the same world),
+`/outage on|off`, `/take`, `/script`, `/status`, `/quit`; anything else is a customer message.
+
+1. `/naive`, then type "Keep the same time of day as my current booking, just move it to Friday." The naive agent
+   (same model, one shot, no questions) books at once; the calendar and the SQL check show what it did.
+2. `/resolve`, the same message. Resolve proposes a slot and asks before writing. If the slot is wrong, say so
+   ("No, keep 10:30 like my current booking. Any technician is fine."); it changes only that and proposes again.
+3. `/outage on`, then "Yes, please book it.": the worker cannot reach FieldDesk and waits. `/outage off`: it books.
+
+Rehearsal on Muse, Nov 3 (4 calls, $0.034): the naive agent read "before 12:00" and booked Fri 09:00 with Mila in
+2 of 2 runs (SQL check: unauthorized); Resolve made the same first reading, proposed Fri 09:00, took the correction,
+proposed Fri 10:30 with Ken, waited through the outage and booked it (correct). The model may read it right on
+camera; if so, say so. The SQL check grades against the case file, so type what the case's customer means.
