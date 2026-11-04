@@ -30,16 +30,23 @@ from resolve.eval.live import OUTAGE, Live, slot_label
 
 PAGE = Path("ui/live.html")
 SPLITS = ("dev", "heldout", "faults")
-# Presets: real case files, chosen because each shows one way a reading can go wrong.
+# Presets: real case files, chosen because each shows one way a reading can go wrong. `plan` is what Play script
+# does besides sending the case file's lines: faults to inject, and the customer's correction when a proposed slot is
+# not one the case file authorizes (a customer says no to the wrong slot; Play never says yes to it).
 PRESETS = [
     {"case": "D1", "title": "A: ambiguous request + outage + slot taken + worker crash",
-     "how": "Outage on, send the message, let another customer take Fri 15:30 Dana, outage off. Resolve asks before "
-            "next week; answer, confirm, and arm the crash before the yes."},
+     "how": "Play: outage on, the message, another customer takes Fri 15:30 Dana while it waits, outage off; it asks "
+            "before next week, gets the answer, proposes, and the worker is killed right after the booking write.",
+     "plan": {"outage": True, "take": True, "crash": True, "correction": None}},
     {"case": "H10", "title": "B: negation (\"Anyone but Victor\")",
-     "how": "Send the message in both lanes; the SQL check grades who it booked."},
+     "how": "Play sends the message; Resolve proposes and the customer confirms or corrects.",
+     "plan": {"outage": False, "take": False, "crash": False,
+              "correction": "No, not Victor. Anyone else, Thursday or Friday."}},
     {"case": "H15", "title": "C: reference (\"same time of day as my current booking\")",
-     "how": "The one-shot agent read this as 'morning' on Muse in rehearsal; Resolve proposes first, so a wrong "
-            "reading is corrected before anything is written."},
+     "how": "Play sends the message; if Resolve proposes the wrong time, the customer corrects it, then confirms "
+            "during a database outage.",
+     "plan": {"outage": False, "take": False, "crash": False, "outage_on_confirm": True,
+              "correction": "No, keep 10:30 like my current booking. Any technician is fine."}},
 ]
 live: dict = {}
 
@@ -199,7 +206,10 @@ async def world(x: Live) -> dict:
             "slots": slots, "calendar": calendar, "today": C.TODAY.isoformat(),
             "script": {"messages": case.messages, "replies": case.replies},
             "taken": [slot_label(case, k) for k in case.taken],
-            "graded": {"authorized": auth, "final": [slot_label(case, k) for k in case.expected["final"]]}}
+            "graded": {"authorized": auth, "final": [slot_label(case, k) for k in case.expected["final"]],
+                       "authorized_ids": [[case.slot_id(k) for k in stage] for stage in case.expected["authorized"]]},
+            "plan": next((p["plan"] for p in PRESETS if p["case"] == case.id),
+                         {"outage": False, "take": False, "crash": False, "correction": None})}
 
 
 @app.get("/api/live/state")

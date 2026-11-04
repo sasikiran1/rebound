@@ -123,6 +123,8 @@ mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: in
 .slot { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 5px; font-size: 11px; line-height: 1.2; overflow: hidden;
   border: 1.5px solid var(--line); background: var(--panel); color: var(--muted); transition: background .4s, border-color .4s; }
 .slot .tm { font-weight: 700; color: var(--ink); }
+.slot, .slot * { overflow-wrap: normal; white-space: nowrap; }
+.feed .empty { display: block; font-family: inherit; }
 .slot .st { display: block; font-weight: 700; font-size: 10px; letter-spacing: .03em; text-transform: uppercase; margin-top: 1px; }
 .slot.open { border-style: dashed; }
 .slot.cur { background: var(--cur-bg); border-color: var(--cur); color: var(--cur); }
@@ -287,8 +289,16 @@ async function start(lane) {
   try { await post("/api/live/start", {case: $("case").value, lane}); } catch (e) { return; }
   $("msg").value = ""; refresh();
 }
+async function ensureLane() {  // a message or Play with no lane started: start Resolve on the selected scenario
+  if (S && S.session.lane && S.world.case === $("case").value) return true;
+  try { await post("/api/live/start", {case: $("case").value, lane: (S && S.session.lane) || "resolve"}); } catch (e) { return false; }
+  toast(`Started ${(S && S.session.lane) || "Resolve"} on case ${$("case").value}: world re-seeded`);
+  await refresh(true);
+  return true;
+}
 async function send(text) {
   text = (text || "").trim(); if (!text) return;
+  if (!(await ensureLane())) return;
   try { await post("/api/live/say", {text}); $("msg").value = ""; lastSent = Date.now(); } catch (e) {}
   refresh();
 }
@@ -297,9 +307,21 @@ $("resolve").onclick = () => start("resolve");
 $("outage").onclick = () => post("/api/live/outage", {on: !S.session.outage}).then(refresh);
 $("take").onclick = () => post("/api/live/take").then(refresh);
 $("crash").onclick = () => post("/api/live/crash", {on: !S.session.crash_armed}).then(refresh);
-$("play").onclick = () => { play = !play; refresh(); };
+$("play").onclick = async () => {
+  if (play) { play = false; refresh(); return; }
+  if (S && S.session.request_id && S.request && S.request.turns.length) {  // a finished or started run: start afresh
+    try { await post("/api/live/start", {case: $("case").value, lane: S.session.lane}); } catch (e) { return; }
+  } else if (!(await ensureLane())) return;
+  P = {}; play = true; refresh();
+};
 $("form").onsubmit = (e) => { e.preventDefault(); send($("msg").value); };
-$("case").onchange = () => { const p = cases.presets.find((x) => x.case === $("case").value); if (p) toast(p.how); };
+$("case").onchange = async () => {  // load the scenario's world at once, in the current lane (Resolve if none)
+  play = false;
+  if (S && S.session.outage) { toast("Turn the DB outage off first: switching re-seeds the database"); $("case").value = S.world.case; return; }
+  try { await post("/api/live/start", {case: $("case").value, lane: (S && S.session.lane) || "resolve"}); } catch (e) { return; }
+  const p = cases.presets.find((x) => x.case === $("case").value); toast(p ? p.how : "World re-seeded for this case");
+  refresh(true);
+};
 
 // ---------- rendering ----------
 function quotesIn(text, quotes) {
@@ -309,7 +331,7 @@ function quotesIn(text, quotes) {
 }
 function renderChat(R) {
   const lane = S.session.lane;
-  if (!S.session.request_id) { put("chat", `<div class="empty">Pick a scenario, then <b>Naive agent</b> or <b>Resolve</b>. Each button re-seeds the same world.</div>`); return; }
+  if (!S.session.request_id) { put("chat", `<div class="empty">Pick a scenario, then press <b>Play script</b> or type a message (Resolve starts by default). <b>Naive agent</b> and <b>Resolve</b> each re-seed the same world.</div>`); return; }
   const v = R && R.versions.length ? R.versions[R.versions.length - 1] : null;
   const quotes = v ? v.rules.map((r) => r.quote) : [];
   let html = "";
@@ -426,7 +448,11 @@ function renderCal(R) {
       for (const s of W.slots.filter((x) => x.technician_id === t.technician_id && x.starts_at.startsWith(d))) {
         const m = +s.starts_at.slice(11, 13) * 60 + +s.starts_at.slice(14, 16);
         let cls = "open", st = "open";
-        if (s.held === "ours") { if (booked && !s.original) { cls = ok ? "good" : "bad"; st = ok ? "✓ booked" : "✗ booked"; } else { cls = "cur"; st = "current"; } }
+        if (s.held === "ours") {
+          if (booked && !s.original && R && TERMINAL.includes(R.state)) { cls = ok ? "good" : "bad"; st = ok ? "✓ booked" : "✗ booked"; }
+          else if (booked && !s.original) { cls = "prop"; st = "written"; }
+          else { cls = "cur"; st = "current"; }
+        }
         else if (s.held === "other") { cls = "other"; st = "taken"; }
         else if (cands.includes(s.slot_id)) { cls = "prop"; st = "proposed"; }
         else if (s.original) { cls = "open was"; st = "moved"; }
@@ -495,30 +521,57 @@ function renderTop(R) {
   $("take").disabled = !S.world.taken.length || !ss.lane; $("take").title = S.world.taken.length ? `Another customer books ${S.world.taken.join("; ")}` : "This case file names no contested slot";
   $("naive").disabled = $("resolve").disabled = ss.outage || ss.busy;
   $("play").classList.toggle("on", play); $("play").textContent = play ? "Playing… (stop)" : "Play script";
-  $("send").disabled = ss.busy || !ss.lane;
-  if ($("case").value !== S.world.case && document.activeElement !== $("case") && !cache._caseSet) { $("case").value = S.world.case; cache._caseSet = true; }
+  $("send").disabled = ss.busy;
+  if (!cache._caseSet) { $("case").value = S.world.case; cache._caseSet = true; }
   put("meta", `model <b>${esc(ss.model)}</b> · ${ss.model_calls} call(s) · $${ss.model_cost_usd.toFixed(4)}`);
   put("reqstate", R ? esc(R.state.replace("_", " ")) : "");
   put("caption", `<b>Synthetic data${play ? ", scripted customer (case file lines)" : ""}.</b> Read live from the request store, FieldDesk's database, the CalDAV calendars and the SQL oracle${ss.request_id ? ` · request ${esc(ss.request_id)}` : ""}.`);
 }
 
+// Play script: the scenario's plan (faults) plus the case file's customer lines. It never says yes to a slot the case
+// file does not authorize: it sends the scenario's correction instead, or stops and leaves the answer to you.
+let P = {};
 async function autoplay(R) {
   if (!play || playBusy || S.session.busy || !S.session.lane || Date.now() - lastSent < 2500) return;
-  const W = S.world;
-  if (!R || !R.turns.length) { playBusy = true; await send(W.script.messages[0]); playBusy = false; return; }
-  if (TERMINAL.includes(R.state)) { play = false; return; }
-  if (R.state !== "needs_input") return;
-  const said = R.turns.filter((t) => t.role === "customer").map((t) => t.text);
-  let next = null;
-  if (R.question && R.question.kind === "confirm") next = "Yes, please book it.";
-  else next = W.script.replies.find((r) => !said.includes(r)) || null;
-  if (!next) { play = false; toast("The case file has no more lines: type the customer's answer."); return; }
-  playBusy = true; await send(next); playBusy = false;
+  const W = S.world, plan = W.plan || {}, ss = S.session;
+  const retries = R ? R.events.filter((e) => e.kind === "worker.retry_later").length : 0;
+  playBusy = true;
+  try {
+    if (!R || !R.turns.length) {
+      if (plan.outage && !ss.outage && !P.outageOn) { await post("/api/live/outage", {on: true}); P.outageOn = true; lastSent = Date.now(); return; }
+      await send(W.script.messages[0]); return;
+    }
+    if (TERMINAL.includes(R.state)) { if (ss.outage) await post("/api/live/outage", {on: false}); play = false; toast("Play finished"); return; }
+    if (ss.outage) {  // the request waits; inject what the plan says, then end the outage
+      if (plan.take && !P.took && retries >= 1) { await post("/api/live/take"); P.took = true; P.tookAt = Date.now(); return; }
+      const over = plan.take ? (P.took && Date.now() - P.tookAt > 3000) : (P.confirmOutage && retries >= P.retriesAtYes + 2);
+      if (over) { await post("/api/live/outage", {on: false}); lastSent = Date.now(); }
+      return;
+    }
+    if (R.state !== "needs_input") return;
+    const said = R.turns.filter((t) => t.role === "customer").map((t) => t.text);
+    const q = R.question || {};
+    if (q.kind === "confirm") {
+      const stages = W.graded.authorized_ids, allowed = stages[Math.min(said.length - 1, stages.length - 1)];
+      if (!allowed.includes(q.candidates[0].slot_id)) {
+        if (plan.correction && !said.includes(plan.correction)) { toast("Wrong slot proposed: the customer says no"); await send(plan.correction); return; }
+        play = false; toast("It proposed a slot this customer did not ask for: type the customer's answer."); return;
+      }
+      if (plan.crash && !ss.crash_armed && !P.crashArmed) { await post("/api/live/crash", {on: true}); P.crashArmed = true; lastSent = Date.now(); return; }
+      if (plan.outage_on_confirm && !P.confirmOutage) { await post("/api/live/outage", {on: true}); P.confirmOutage = true; P.retriesAtYes = retries; }
+      await send("Yes, please book it."); return;
+    }
+    const next = W.script.replies.find((r) => !said.includes(r)) || (plan.correction && !said.includes(plan.correction) ? plan.correction : null);
+    if (!next) { play = false; toast("The case file has no more lines: type the customer's answer."); return; }
+    await send(next);
+  } catch (e) { play = false; } finally { playBusy = false; }
 }
 
 async function refresh() {
   try { S = await (await fetch("/api/live/state")).json(); } catch (e) { put("caption", "Cannot reach the live server."); return; }
   const R = S.request;
+  // a new request sits in needs_input with no question until its first reading is stored: show it as reading
+  if (R && R.state === "needs_input" && !R.question) R.state = S.session.busy ? "reading" : "no reading";
   renderTop(R); renderChat(R); renderRules(R); renderPipe(R); renderCal(R); renderSql(R); renderFeed(); renderChips(R);
   autoplay(R);
 }
