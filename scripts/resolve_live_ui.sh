@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Live flow screen: the live console behind a browser page (resolve/eval/live_web.py).
-# Usage: scripts/resolve_live_ui.sh [--model muse-spark-1.3] [--max-calls 40] [--max-cost 0.50] [--port 8092]
+# Usage: scripts/resolve_live_ui.sh [--model muse-spark-1.3] [--max-calls 40] [--max-cost 0.50] [--case D1] [--port 8092]
 # then open http://127.0.0.1:8092/. Default model is the local one (free).
 # Stops the resolve-worker container first, or it would take the requests.
 set -euo pipefail
@@ -13,6 +13,7 @@ while [ $# -gt 0 ]; do
     --max-calls) export RESOLVE_LIVE_MAX_CALLS="$2"; shift 2 ;;
     --max-cost) export RESOLVE_LIVE_MAX_COST="$2"; shift 2 ;;
     --port) port="$2"; shift 2 ;;
+    --case) export RESOLVE_LIVE_CASE="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
