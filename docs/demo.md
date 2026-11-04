@@ -60,8 +60,8 @@ recorded footage as live.
 
 ## Live flow screen (browser)
 
-`scripts/resolve_live_ui.sh --model muse-spark-1.3`, then open `http://127.0.0.1:8092/` (one tab only: every open
-tab drives the same session). It is the live console below with a page on top, written for someone who has never
+`make resolve-live MODEL=muse-spark-1.3`, then open `http://127.0.0.1:8092/` (one tab only: every open tab drives the
+same session). It is the live console below with a page on top, written for someone who has never
 heard of Rebound: a "What is Rebound?" intro (the `?` button), a narrator bar saying what is happening in plain
 words, a scoreboard comparing the run without Rebound, the run with Rebound and what the customer actually wanted,
 and the steps in plain language with the ones Rebound performs tagged REBOUND (crossed out in the run without it).

@@ -1,7 +1,7 @@
 [project]
 name = "rebound"
 version = "0.1.0"
-description = "Agent recovery gate: do tool-using AI agents delay an API's recovery after a brief database slowdown?"
+description = "Keeps AI agents from booking what the customer did not ask for: a measured study of Muse Spark agents under API faults, and Resolve, a scheduling-recovery service where the model proposes, code decides and SQL judges."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"

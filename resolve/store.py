@@ -7,9 +7,9 @@ A request has one stable identity (`request_id`) and moves through explicit stat
   ready        an approved intent version waits for the worker
   claimed      the worker holds a lease and is executing the frozen version
   completed    the booking is confirmed (change_id recorded)
+  unresolved   nothing will be booked (declined, unsupported, or no progress)
 With `confirm` set (product mode), the worker never books a slot the customer has not explicitly approved: it asks
 "shall I book <slot>?" first. The frozen evaluation runs with it off, as the cases were written.
-  unresolved   nothing will be booked (declined, unsupported, or no progress)
 
 Every approved intent is a new row in `resolve.versions`; the request points at the version being executed. The
 in-flight booking attempt (slot, idempotency key, sending/acked) is written *before* the POST, so a worker that dies
