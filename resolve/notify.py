@@ -48,14 +48,15 @@ class Notifier:
                 smtp.login(self.user, self.password or "")
             smtp.send_message(msg)
 
-    async def drain(self, limit: int = 20) -> dict:
-        """Send every due notification (at most `limit`). Returns counts."""
+    async def drain(self, limit: int = 20, request_id: str | None = None) -> dict:
+        """Send every due notification (at most `limit`; only one request's with `request_id`). Returns counts."""
         sent = failed = retry = 0
         for _ in range(limit):
             async with self.store.pool.acquire() as c, c.transaction():
                 row = await c.fetchrow(
                     "SELECT * FROM resolve.notifications WHERE status = 'pending' AND next_attempt_at <= "
-                    "clock_timestamp() ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1")
+                    "clock_timestamp() AND ($1::text IS NULL OR request_id = $1) "
+                    "ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1", request_id)
                 if row is None:
                     break
                 row = dict(row)

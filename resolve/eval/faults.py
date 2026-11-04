@@ -257,20 +257,20 @@ async def check_notifications(env: Env) -> dict:
         w = Worker(env.store, env.api, owner="w-notify")
         await w.run_once(rid)  # asks "shall I book it?": a notification is queued with the question
         sink.refuse = True
-        refused = await notifier.drain()
+        refused = await notifier.drain(request_id=rid)
         queued = (await env.store.notifications(rid))[0]
         sink.refuse = False
         await asyncio.sleep(5.5)  # first retry is due 5 s after a failure
-        retried = await notifier.drain()
+        retried = await notifier.drain(request_id=rid)
         times.append(await env.now())
         await Resolve(env.store, env.api, None, C.TODAY, C.HORIZON_DAYS).customer_says(rid, "Yes, please book it.")
         await w.run_once(rid)
-        final = await notifier.drain()
+        final = await notifier.drain(request_id=rid)
         rows = await env.store.notifications(rid)
         v = await verdict(env.oracle, case, times)
     finally:
         await sink.stop()
-    # The notifier drains every due message, other requests' included (several checks share this fixture's
+    # The notifier drains this request only (other runs may leave due messages; several checks share this fixture's
     # customer); judge this request's own, by its Message-ID.
     mine = [m for m in sink.messages if m["message_id"].startswith(f"<{rid.replace(':', '.')}.")]
     subjects = [m["subject"] for m in mine]
@@ -433,6 +433,226 @@ async def check_invalid(env: Env) -> dict:
     return {"passed": all(x["passed"] for x in out.values()), "cases": out}
 
 
+async def _uncertain_v1(env: Env, case, rid: str, slot_key: str) -> dict:
+    """A worker recorded a v1 attempt (`sending`), then gave up without an answer and released the request: the state
+    a timeout leaves behind (the request is `ready` again with the attempt kept)."""
+    req = await env.store.claim("w-old", 8, rid, honor_backoff=False)
+    key = f"resolve:{rid}:v{req['version']}"
+    await env.store.record_attempt(rid, "w-old", case.slot_id(slot_key), key, "sending", gen=req["lease_gen"])
+    await env.store.set_state(rid, "ready", owner="w-old", gen=req["lease_gen"])
+    return {"key": key, "slot_id": case.slot_id(slot_key)}
+
+
+async def check_superseded_attempt(env: Env) -> dict:
+    """The customer corrects the request while an unconfirmed v1 write is outstanding (it never reached FieldDesk).
+    The worker must not resend v1: it voids v1's key and books by v2; a late copy of the v1 write is then refused."""
+    case, rid = await env.fresh("F4", "superseded_attempt")
+    times = await env.structured(case, rid)  # v1: Friday, any time
+    old = await _uncertain_v1(env, case, rid, "fri 09:00 gus")
+    times.append(await env.now())
+    svc = Resolve(env.store, env.api, None, C.TODAY, C.HORIZON_DAYS)
+    v2 = await svc.approve_structured(rid, form_intent(case, {"rules": [
+        {"kind": "on_dates", "dates": ["2026-11-13"]}, {"kind": "start_at_or_after", "time": "14:00"}]}),
+        "form", "structured correction: after 2pm")
+    res = await Worker(env.store, env.api, owner="w-new").run_once(rid)
+    late = None
+    try:  # the old write arrives late, with its own key
+        await env.api.reschedule(case.appointment_id, case.customer_id, old["slot_id"], old["key"])
+        late = "applied"
+    except Exception as exc:  # noqa: BLE001 - the expected refusal is an ApiError
+        late = getattr(exc, "body", {}).get("type") or type(exc).__name__
+    v = await verdict(env.oracle, case, times)
+    ev = [e for e in await events(env, rid) if e["kind"] == "worker.superseded_attempt"]
+    ok = (v2 == 2 and res["result"] == "completed" and ev and ev[0]["outcome"] == "voided" and late == "key_voided"
+          and v["verdict"] == "correct" and v["changes"] == 1)
+    return {"passed": ok, "worker": res, "superseded": ev, "late_v1_write": late, "verdict": v,
+            "before_fix": "the worker resent v1 (Fri 09:00 Gus) and completed: unauthorized after the correction"}
+
+
+async def check_superseded_committed(env: Env) -> dict:
+    """Same, but the v1 write did commit before the correction (its answer was lost). The worker learns that from
+    the key without resending it, reports the change, then moves the appointment to what v2 allows."""
+    case, rid = await env.fresh("F4", "superseded_committed")
+    times = await env.structured(case, rid)
+    old = await _uncertain_v1(env, case, rid, "fri 09:00 gus")
+    await env.api.reschedule(case.appointment_id, case.customer_id, old["slot_id"], old["key"])  # landed, ack lost
+    times.append(await env.now())
+    svc = Resolve(env.store, env.api, None, C.TODAY, C.HORIZON_DAYS)
+    await svc.approve_structured(rid, form_intent(case, {"rules": [
+        {"kind": "on_dates", "dates": ["2026-11-13"]}, {"kind": "start_at_or_after", "time": "14:00"}]}),
+        "form", "structured correction: after 2pm")
+    res = await Worker(env.store, env.api, owner="w-new").run_once(rid)
+    rows = await env.changes(case)
+    ev = [e for e in await events(env, rid) if e["kind"] == "worker.superseded_attempt"]
+    final = await env.oracle.fetchval("SELECT slot_id FROM appointments WHERE id = $1", case.appointment_id)
+    ok = (ev and ev[0]["outcome"] == "applied" and res["result"] == "completed" and len(rows) == 2
+          and rows[0]["idempotency_key"] == old["key"] and final == case.slot_id("fri 14:30 ida"))
+    return {"passed": ok, "worker": res, "superseded": ev, "changes": [dict(r) for r in rows],
+            "note": "two changes, each authorized when made: v1 committed before the correction, v2 after it"}
+
+
+FRIDAY = {"rules": [{"kind": "on_dates", "dates": ["2026-11-13"], "strength": "flexible", "quote": "Friday"}],
+          "summary": "Friday"}
+AFTER2 = {"ops": [{"op": "add_rule", "rule": {"kind": "start_at_or_after", "time": "14:00", "strength": "flexible",
+                                              "quote": "after 2pm"}}], "summary": "Friday after 2pm"}
+DECLINE = {"ops": [{"op": "decline"}], "summary": "leave it"}
+
+
+async def _open_with_uncertain_v1(env: Env, check: str, outputs: list):
+    """F4 opened by a (canned) message, then an unconfirmed v1 write to Fri 09:00 Gus left behind by a timeout."""
+    case, rid = await env.fresh("F4", check)
+    model = CannedModel([FRIDAY] + outputs)
+    svc = Resolve(env.store, env.api, model, C.TODAY, C.HORIZON_DAYS)
+    await svc.open(rid, case.customer_id, case.appointment_id, case.region, case.service, case.messages[0])
+    old = await _uncertain_v1(env, case, rid, "fri 09:00 gus")
+    return case, rid, model, old
+
+
+async def _late_v1(env: Env, case, old) -> str:
+    try:
+        await env.api.reschedule(case.appointment_id, case.customer_id, old["slot_id"], old["key"])
+        return "applied"
+    except Exception as exc:  # noqa: BLE001 - the expected refusal is an ApiError
+        return getattr(exc, "body", {}).get("type") or type(exc).__name__
+
+
+def _unreachable(env: Env) -> FieldDesk:
+    return FieldDesk("http://127.0.0.1:9", timeout_s=1.0, actor="resolve-faults-unreachable")  # nothing listens
+
+
+async def check_correction_settles_first(env: Env) -> dict:
+    """A correction arrives while a v1 write is in doubt and FieldDesk is reachable: the conversation voids the v1
+    key before it accepts the correction, so v2 takes effect at once and a late v1 write is refused."""
+    case, rid, model, old = await _open_with_uncertain_v1(env, "correction_settles_first", [AFTER2])
+    svc = Resolve(env.store, env.api, model, C.TODAY, C.HORIZON_DAYS)
+    res = await svc.customer_says(rid, case.messages[1])
+    after = await env.store.get(rid)
+    late = await _late_v1(env, case, old)
+    w = await Worker(env.store, env.api, owner="w-settle").run_once(rid)
+    rows = await env.changes(case)
+    final = await env.oracle.fetchval("SELECT slot_id FROM appointments WHERE id = $1", case.appointment_id)
+    ev = [e for e in await events(env, rid) if e["kind"] == "service.settled_before_turn"]
+    ok = (res.get("earlier_write") == "voided" and not res.get("pending") and after["version"] == 2
+          and after["pending_version"] is None and late == "key_voided" and w["result"] == "completed"
+          and len(rows) == 1 and final == case.slot_id("fri 14:30 ida"))
+    return {"passed": ok, "correction": res, "late_v1_write": late, "worker": w, "settled": ev,
+            "changes": [dict(r) for r in rows]}
+
+
+async def check_correction_waits_for_settlement(env: Env) -> dict:
+    """The ordering the review named: the correction arrives while FieldDesk cannot be reached, then the old v1 write
+    commits. The correction must not have taken effect before that: it stays pending (version 1 current), the worker
+    settles the v1 key (applied), and only then makes v2 current and moves the appointment; the customer is told."""
+    case, rid, model, old = await _open_with_uncertain_v1(env, "correction_waits", [AFTER2])
+    down = _unreachable(env)
+    try:
+        res = await Resolve(env.store, down, model, C.TODAY, C.HORIZON_DAYS).customer_says(rid, case.messages[1])
+    finally:
+        await down.close()
+    pending = await env.store.get(rid)
+    late = await _late_v1(env, case, old)  # the old write lands after the correction was received
+    w = await Worker(env.store, env.api, owner="w-pending").run_once(rid)
+    rows = await env.oracle.fetch("SELECT id, to_slot_id, idempotency_key, applied_at FROM appointment_changes "
+                                  "WHERE appointment_id = $1 ORDER BY id", case.appointment_id)
+    ev = await env.store.pool.fetch("SELECT kind, data, at FROM resolve.events WHERE request_id = $1 AND kind IN "
+                                    "('worker.superseded_attempt', 'worker.correction_applied') ORDER BY id", rid)
+    applied_at = rows[0]["applied_at"] if rows else None
+    promoted_at = next((e["at"] for e in ev if e["kind"] == "worker.correction_applied"), None)
+    told = [t["text"] for t in await env.store.turns(rid) if "went through before I could stop it" in t["text"]]
+    final = await env.oracle.fetchval("SELECT slot_id FROM appointments WHERE id = $1", case.appointment_id)
+    ok = bool(res.get("pending") and pending["version"] == 1 and pending["pending_version"] == 2
+              and late == "applied" and w["result"] == "completed" and promoted_at is not None
+              and applied_at is not None and applied_at < promoted_at and len(rows) == 2
+              and final == case.slot_id("fri 14:30 ida") and told)
+    return {"passed": ok, "correction": res, "after_correction": {"version": pending["version"],
+                                                                    "pending_version": pending["pending_version"]},
+            "late_v1_write": late, "worker": w, "v1_applied_at": applied_at, "v2_took_effect_at": promoted_at,
+            "customer_told": told,
+            "note": "the v1 write was sent before the correction; it commits before v2 takes effect, never after"}
+
+
+async def check_decline_settles(env: Env) -> dict:
+    """Declining while a write is in doubt: reachable, the key is voided and nothing changes; unreachable, the close
+    waits for the worker, which settles the write (here it had gone through) and tells the customer so."""
+    out = {}
+    case, rid, model, old = await _open_with_uncertain_v1(env, "decline_reachable", [DECLINE])
+    res = await Resolve(env.store, env.api, model, C.TODAY, C.HORIZON_DAYS).customer_says(rid, "No, leave it.")
+    late = await _late_v1(env, case, old)
+    req = await env.store.get(rid)
+    out["reachable"] = {"passed": req["state"] == "unresolved" and late == "key_voided" and not await env.changes(case),
+                        "reply": res, "late_v1_write": late}
+    case, rid, model, old = await _open_with_uncertain_v1(env, "decline_unreachable", [DECLINE])
+    down = _unreachable(env)
+    try:
+        res = await Resolve(env.store, down, model, C.TODAY, C.HORIZON_DAYS).customer_says(rid, "No, leave it.")
+    finally:
+        await down.close()
+    waiting = await env.store.get(rid)
+    late = await _late_v1(env, case, old)
+    w = await Worker(env.store, env.api, owner="w-decline").run_once(rid)
+    req = await env.store.get(rid)
+    last = (await env.store.turns(rid))[-1]["text"]
+    out["unreachable"] = {"passed": bool(res.get("pending_close")) and waiting["state"] == "ready" and late == "applied"
+                          and w["result"] == "unresolved" and w.get("settled") == "applied"
+                          and req["state"] == "unresolved" and "went through" in last,
+                          "reply": res, "late_v1_write": late, "worker": w, "last_message": last}
+    return {"passed": all(x["passed"] for x in out.values()), **out}
+
+
+async def check_stale_worker(env: Env) -> dict:
+    """Worker A pauses past its lease right before its POST; worker B takes over and books. A must not send."""
+    case, rid = await env.fresh("F2", "stale_worker")
+    times = await env.structured(case, rid)
+
+    async def pause(req, slot):
+        await asyncio.sleep(2.5)
+
+    a = Worker(env.store, env.api, owner="w-a", lease_s=1, before_post=pause)
+    b = Worker(env.store, env.api, owner="w-b", lease_s=8)
+    ta = asyncio.create_task(a.run_once(rid))
+    await asyncio.sleep(1.6)
+    rb = await b.run_once(rid)
+    ra = await ta
+    v = await verdict(env.oracle, case, times)
+    ev = [e["kind"] for e in await events(env, rid)]
+    ok = (ra["result"] == "lease_lost" and rb["result"] == "completed" and "worker.lease_lost_before_send" in ev
+          and v["verdict"] == "correct" and v["changes"] == 1)
+    return {"passed": ok, "stale_worker": ra, "new_worker": rb, "verdict": v}
+
+
+async def check_backoff(env: Env) -> dict:
+    """After a failed search the service loop does not claim the request again before its backoff ends."""
+    case, rid = await env.fresh("F2", "backoff")
+    times = await env.structured(case, rid)
+    w = Worker(env.store, env.api, owner="w-backoff")
+    await env.tox.add_latency("pg", 5000, 0, name="backoff")
+    try:
+        first = await w.run_once(rid, honor_backoff=True)
+    finally:
+        await env.tox.remove("pg", "backoff")
+    again = await w.run_once(rid, honor_backoff=True)  # immediately: still inside the backoff window
+    await asyncio.sleep(first.get("retry_in_s", 0) + 0.3)
+    later = await w.run_once(rid, honor_backoff=True)
+    v = await verdict(env.oracle, case, times)
+    ok = (first["result"] == "retry_later" and first["retry_in_s"] >= 0.8 and again is None
+          and later is not None and later["result"] == "completed" and v["verdict"] == "correct")
+    return {"passed": ok, "first": first, "immediately_after": again, "after_backoff": later, "verdict": v}
+
+
+async def check_atomic_question(env: Env) -> dict:
+    """A question is stored with its turn and its email in one transaction: no question without its message."""
+    case, rid = await env.fresh("F2", "atomic_question")
+    await env.structured(case, rid, confirm=True)
+    res = await Worker(env.store, env.api, owner="w-atomic").run_once(rid)
+    req = await env.store.get(rid)
+    turns = [t for t in await env.store.turns(rid) if t["role"] == "assistant"]
+    notes = await env.store.notifications(rid)
+    ok = (res["result"] == "needs_input" and req["question"] is not None and turns and turns[-1]["kind"] == "confirm"
+          and any(n["kind"] == "confirm" and n["turn_n"] == turns[-1]["n"] for n in notes))
+    return {"passed": ok, "worker": res, "question_turn": turns[-1] if turns else None,
+            "notifications": [{"kind": n["kind"], "turn_n": n["turn_n"]} for n in notes]}
+
+
 CHECKS = {
     "truncation": check_truncation,
     "invalid_intent": check_invalid,
@@ -446,6 +666,14 @@ CHECKS = {
     "notifications": check_notifications,
     "fault_shapes": check_fault_shapes,
     "calendar": check_calendar,
+    "superseded_attempt": check_superseded_attempt,
+    "superseded_committed": check_superseded_committed,
+    "correction_settles_first": check_correction_settles_first,
+    "correction_waits_for_settlement": check_correction_waits_for_settlement,
+    "decline_settles": check_decline_settles,
+    "stale_worker": check_stale_worker,
+    "backoff": check_backoff,
+    "atomic_question": check_atomic_question,
 }
 
 

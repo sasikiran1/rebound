@@ -14,10 +14,29 @@ import httpx
 PAGE = 50  # FieldDesk SEARCH_LIMIT
 
 
+def parse_retry_after(value: str | None, now: float | None = None) -> float | None:
+    """Seconds to wait from a Retry-After header: delay-seconds or an HTTP-date (RFC 9110). None if absent or bad."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    from email.utils import parsedate_to_datetime
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when is None or when.tzinfo is None:
+        return None
+    return max(0.0, when.timestamp() - (time.time() if now is None else now))
+
+
 class ApiError(Exception):
-    def __init__(self, status: str, http_status: int | None, message: str, body: dict | None = None):
+    def __init__(self, status: str, http_status: int | None, message: str, body: dict | None = None,
+                 retry_after: float | None = None):
         super().__init__(f"{status}: {message}")
         self.status, self.http_status, self.message, self.body = status, http_status, message, body or {}
+        self.retry_after = retry_after  # seconds, from the server's Retry-After header
 
     @property
     def uncertain(self) -> bool:
@@ -65,7 +84,8 @@ class FieldDesk:
         err = data.get("error", {}) if isinstance(data, dict) else {}
         entry.update(status=f"http_{r.status_code}", error=err.get("type"))
         self.log.append(entry)
-        raise ApiError(f"http_{r.status_code}", r.status_code, err.get("message", ""), err)
+        raise ApiError(f"http_{r.status_code}", r.status_code, err.get("message", ""), err,
+                       parse_retry_after(r.headers.get("Retry-After")))
 
     async def context(self, customer_id: int) -> dict:
         return await self._call("context", "GET", f"/customers/{customer_id}/context")
@@ -96,3 +116,9 @@ class FieldDesk:
         return await self._call("reschedule", "POST", f"/appointments/{appointment_id}/reschedule",
                                 body={"slot_id": slot_id, "customer_id": customer_id},
                                 headers={"Idempotency-Key": key})
+
+    async def void_key(self, key: str) -> dict:
+        """Settle an uncertain write without repeating it: {'outcome': 'applied', 'change': …} if it committed,
+        else {'outcome': 'voided'}, after which a late copy of that write is refused (409 key_voided)."""
+        from urllib.parse import quote
+        return await self._call("void_key", "POST", f"/idempotency/{quote(key, safe='')}/void")

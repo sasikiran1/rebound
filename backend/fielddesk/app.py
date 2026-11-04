@@ -391,6 +391,19 @@ CHANGE_BY_KEY = (
     "SELECT id, appointment_id, from_slot_id, to_slot_id, applied_at "
     "FROM appointment_changes WHERE idempotency_key = $1"
 )
+# Key fencing (Resolve). Where the table `idempotency_keys` exists, every reschedule claims its key there in the same
+# transaction ('applied'), and POST /idempotency/{key}/void claims it as 'voided' when no change exists. The primary key
+# serializes the two: a write still in flight when its key is voided fails with 409 key_voided and commits nothing.
+# The study's template database has no such table, so its trials keep the behavior they were recorded with; the
+# Resolve store creates it in the trial database (resolve/store.py).
+KEY_FENCE = "idempotency_keys_pkey"
+_fencing: dict = {"on": False}
+
+
+async def fencing_on(conn) -> bool:
+    if not _fencing["on"]:  # checked until found, then cached: the table may be created after FieldDesk starts
+        _fencing["on"] = bool(await conn.fetchval("SELECT to_regclass('public.idempotency_keys') IS NOT NULL"))
+    return _fencing["on"]
 
 
 @app.post("/appointments/{appointment_id}/reschedule")
@@ -406,6 +419,9 @@ async def reschedule(
                 prior = await conn.fetchrow(CHANGE_BY_KEY, idempotency_key)
                 if prior is not None:
                     return change_json(prior, replayed=True)
+                if await fencing_on(conn):
+                    await conn.execute("INSERT INTO idempotency_keys (key, outcome) VALUES ($1, 'applied')",
+                                       idempotency_key)
                 appt = await conn.fetchrow(
                     """
                     SELECT a.id, a.customer_id, a.status, a.slot_id, st.skill_id, c.region_id
@@ -457,9 +473,31 @@ async def reschedule(
     except asyncpg.UniqueViolationError as exc:
         if exc.constraint_name == SLOT_CONFLICT:
             raise ApiError(409, "slot_taken", f"slot {body.slot_id} is already booked") from exc
-        if exc.constraint_name == KEY_CONFLICT:
-            # A concurrent request with the same key committed first; return its result.
+        if exc.constraint_name in (KEY_CONFLICT, KEY_FENCE):
+            # A concurrent request with the same key committed first (return its result), or the key was voided.
             async with db.acquire() as conn:
                 prior = await conn.fetchrow(CHANGE_BY_KEY, idempotency_key)
+            if prior is None:
+                raise ApiError(409, "key_voided", "this idempotency key was voided; nothing was written") from exc
             return change_json(prior, replayed=True)
         raise
+
+
+@app.post("/idempotency/{key}/void")
+async def void_key(key: str):
+    """Settle an uncertain write without repeating it: the change made under `key` if it committed ('applied'),
+    otherwise the key is voided, so a copy of that write still in flight can never commit ('voided')."""
+    async with db.acquire() as conn:
+        if not await fencing_on(conn):
+            raise ApiError(501, "fencing_unavailable", "idempotency_keys table not present in this database")
+        async with conn.transaction():
+            prior = await conn.fetchrow(CHANGE_BY_KEY, key)
+            if prior is None:
+                won = await conn.fetchval("INSERT INTO idempotency_keys (key, outcome) VALUES ($1, 'voided') "
+                                          "ON CONFLICT (key) DO NOTHING RETURNING outcome", key)
+                if won:
+                    return {"key": key, "outcome": "voided"}
+                prior = await conn.fetchrow(CHANGE_BY_KEY, key)  # a write with this key committed meanwhile
+                if prior is None:
+                    return {"key": key, "outcome": "voided"}  # voided earlier
+            return {"key": key, "outcome": "applied", "change": change_json(prior, replayed=True)}

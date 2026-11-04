@@ -134,7 +134,44 @@ holds it to a schema: most of its failures are refusals to book, not wrong booki
 | dev-r4 | qwen2.5-14b / gemma4-12b, v2 | 2/6 / 3/6 | 2 / 1 |
 | muse-dev | Muse Spark 1.3, v2 | 6/6 | 0 |
 
-## Recovery checks (live stack, `runs/resolve/faults/faults-r6`)
+## Recovery checks (live stack, `runs/resolve/faults/faults-r11`)
+
+**20 of 20 pass** (targeted checks, one run each). A second review pass found the first fix below incomplete, and
+all three points were real: a correction could take effect while the old write was still unsettled (an old write
+could commit after the correction); declining closed the request without settling a write in doubt; and a
+server's Retry-After over 30 s was shortened to 30 s (HTTP-date values were ignored). Now a customer turn settles
+the write in doubt before it takes effect; if FieldDesk cannot be reached, the correction or close waits as
+pending and the worker settles first. New checks: `correction_settles_first`, `correction_waits_for_settlement`
+(the v1 write commits after the correction was received; v2 stays pending and takes effect only after it; the
+customer is told), `decline_settles` (FieldDesk reachable: nothing changes and a late v1 write is refused;
+unreachable: the worker settles, finds the write went through, and says so). Retry-After is honored in full.
+
+### First pass (`faults-r8`)
+
+**17 of 17 pass** (targeted checks, one run each; they show the mechanism under the injected conditions, not a
+reliability rate). Run 8 follows an outside review of the code on Nov 3 that found four defects; all four were real and
+are fixed (decision record 0008):
+
+- **A superseded uncertain write could still be sent.** After a timeout the request returned to `ready` with its v1
+  attempt kept; a correction then approved v2, and the next worker resent v1's slot and key and completed without
+  evaluating v2 (reproduced: Thursday booked under a Friday-only v2, `replayed=False`). Now the worker never resends
+  an attempt from an older version: it voids that key through FieldDesk, which reports the change if it committed
+  and otherwise makes the key unusable, so a copy still in flight cannot land. `superseded_attempt`: v1's key voided,
+  v2's slot booked, a late v1 write refused with `key_voided`, one change. `superseded_committed`: the v1 write had
+  committed before the correction; the worker learns that from the key without resending, then moves the
+  appointment to what v2 allows (two changes, each authorized when made).
+- **State and customer message were separate writes.** A crash between them could leave a question with no email.
+  The state change, the assistant turn and its notification are now one transaction (`atomic_question`).
+- **Immediate retries.** A released request was claimed again at once and Retry-After was discarded. Now it waits
+  for the server's Retry-After, or 1 s doubling to 30 s with jitter (`backoff`).
+- **Leases without fencing.** Leases were not renewed and every compose replica used the same owner name. Owners are
+  now unique per process, every claim starts a new lease generation that guards the worker's writes, and the lease is
+  renewed right before the booking POST; a worker that paused past its lease does not send (`stale_worker`).
+
+Run 8 also scopes the notification check to its own request (other runs had left more due messages than one pass
+sends). Earlier runs follow.
+
+## Recovery checks, earlier run (`runs/resolve/faults/faults-r6`)
 
 **12 of 12 pass.** Run 6 adds **calendar sync**: a real CalDAV server (Radicale) holds the technicians' calendars;
 the original appointment is mirrored first and stale copies are planted in the other technicians' calendars; the
