@@ -1,17 +1,21 @@
 [project]
 name = "rebound"
 version = "0.1.0"
-description = "Resolve: a scheduling-recovery service where Muse Spark proposes, code decides what may be booked, and SQL checks the result."
+description = "Keeps AI agents from booking what the customer did not ask for: a measured study of Muse Spark agents under API faults, and Resolve, a scheduling-recovery service where the model proposes, code decides and SQL judges."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "asyncpg",
     "httpx",
+    "jinja2",
     "jsonschema",
+    "matplotlib",
     "openai",
+    "pandas",
     "pydantic",
     "pyyaml",
+    "uvloop>=0.23.0",
 ]
 
 [dependency-groups]
@@ -49,3 +53,8 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 # Small one-off file reads in async setup code are fine.
 ignore = ["ASYNC240"]
+
+[tool.ruff.lint.per-file-ignores]
+# HTML template lines.
+"analysis/report.py" = ["E501"]
+"analysis/experiment_report.py" = ["E501"]

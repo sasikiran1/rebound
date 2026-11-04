@@ -1,0 +1,21 @@
+# Exploration on task set A. Values marked TUNABLE may change before the freeze.
+experiment: explore-v1
+backend: {note: "repo_sha, image digests, postgres.conf and backend code hash are filled in at resolve time"}
+resources: {api_cpuset: "4-5", pg_cpuset: "2-3", toxiproxy_cpuset: "6", runner_cpuset: "8-15",
+            api_mem: 2g, pg_mem: 2g, uvicorn_workers: 1, pool_size: 8, pg_max_connections: 40}
+data: {generator_seed: 1729, scale: 1.0, template_db: fielddesk_template,
+       checksum: "sha256:cc0173457eef08430a5f88786196913195aa9d89c26ecf2033c27dfd0eb1beb3"}
+tasks: {file: data/tasks/tasks_dev_A.jsonl, sha256: "1cf371381b1f8c8271a173c3a2171a3fe8b476eea34eab13c12688c1479710e0"}
+arrivals: {process: poisson, goals_per_s: 0.4, seed: 7, start_s: 0, stop_s: 550}
+background: {rate_rps: 520, mix: {day_availability: 0.7, get_appointment: 0.3}, timeout_s: 2.0, retries: 0}  # TUNABLE
+windows: {warmup: [0, 60], baseline: [60, 180], observe_s: 360, drain_deadline_s: 240}
+fault: {kind: latency, proxy: pg, direction: downstream, latency_ms: 400, jitter_ms: 50, start_s: 180, duration_s: 10}
+gate: {tokens: 8, queue_max: 16, queue_wait_ms: 1500, retry_after_s: 2}  # TUNABLE (grid in section 7a)
+# continuation: full_history since tr_0014 (provider lost ~3% of stored responses deep in chains; docs/results.md)
+model: {id: muse-spark-1.3, api: responses, continuation: full_history, reasoning_effort: low,
+        max_output_tokens: 2048, parallel_tool_calls: false, prompt_cache_key: rebound-agent-v1,
+        prompt: prompts/agent_v1.md, tools: prompts/tools_v1.json}
+scripted: {think_time_s: 10.25}  # agents' median healthy step time, measured in runs/explore-v1/tr_0002
+limits: {model_calls_per_goal: 16, tool_calls_per_goal: 14, goal_deadline_s: 240,
+         input_tokens_per_goal: 80000, max_concurrent_goals: 24, trial_budget_usd: 10}
+calibration: {healthy_bg_p95_ms: 8.9, capacity_rps: 800, capacity_db_ms_per_s: 3737, notes: "step test runs/calibration/steptest_20261027T180416; knee 900 rps"}  # TUNABLE

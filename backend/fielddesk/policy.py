@@ -1,5 +1,4 @@
-"""Agent policy file and refusal probe, used to measure how agents react to 503 + Retry-After. Both are off unless
-enabled by environment.
+"""Agent policy file and refusal probe (docs/policy_probe_protocol.md). Both are off unless enabled by environment.
 
 - AGENT_POLICY=on: FieldDesk serves /.well-known/agent-policy.json, and its 503 refusals state the policy in the
   error message. Off: refusals keep the gate's plain message.

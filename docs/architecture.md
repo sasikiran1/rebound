@@ -1,8 +1,9 @@
 # Architecture
 
-**Resolve** (`resolve/`) is a scheduling-recovery service: the model interprets, deterministic code decides and
-executes, SQL judges. It books through **FieldDesk** (`backend/`), a small field-service API built for this project.
-`harness/` holds the shared plumbing: settings, database setup, Toxiproxy control and the model clients.
+Rebound has two parts that share one backend. The **study** (`harness/`, `oracle/`, `analysis/`) measures real
+tool-using agents against FieldDesk under injected faults. **Resolve** (`resolve/`) is a scheduling-recovery assistant
+built on the lessons: the model interprets, deterministic code decides and executes, SQL judges. This page covers
+Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.md).
 
 ## Components
 

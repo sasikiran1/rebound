@@ -3,37 +3,75 @@
 export
 
 COMPOSE := docker compose -f docker/compose.yml
+# The study pins the runner to CPUs 8-15, away from the containers' CPU sets; on smaller machines it runs unpinned.
+RUNNER_CPUS ?= $(shell [ "$$(nproc)" -ge 16 ] && echo 8-15)
+PY := $(if $(RUNNER_CPUS),taskset -c $(RUNNER_CPUS) )uv run python
+MANIFEST ?= manifests/frozen/eval_v1.yaml
 
-.PHONY: up down seed clone preflight resolve-up check test lint no-sleep resolve-ui resolve-live resolve-demo \
-	resolve-faults resolve-form resolve-eval
+.PHONY: sut-up sut-down seed tasks clone reset preflight pulse endpoints calibrate verify-model goal trial \
+	analyze verify report bundle test lint no-sleep check resolve-ui resolve-demo resolve-faults resolve-form \
+	resolve-eval resolve-up resolve-live
 
-# PostgreSQL 16, Toxiproxy (fault injection on the database link) and FieldDesk, the booking API.
-up:
+sut-up:
 	mkdir -p var/fielddesk
 	$(COMPOSE) up -d --build --wait
 
-down:
-	$(COMPOSE) --profile resolve down
+sut-down:
+	$(COMPOSE) down
 
-# Seeded synthetic template database (identical checksum on every run).
+# Template database and both task sets (seeded; identical checksums on every run).
 seed:
-	uv run python -m data.generator
+	$(PY) -m data.generator
+
+tasks: clone
+	$(PY) -m harness verify-tasks data/tasks/tasks_dev_A.jsonl
+	$(PY) -m harness verify-tasks data/tasks/tasks_eval_B.jsonl
 
 clone:
-	uv run python -m harness clone
+	$(PY) -m harness clone
 
-# Fresh trial database from the template, FieldDesk restarted (its pool held connections to the dropped database).
-preflight: clone
+# Fresh trial DB + FieldDesk restart (its pool held connections to the dropped DB).
+reset: clone
 	$(COMPOSE) restart fielddesk
 	$(COMPOSE) up -d --wait fielddesk
+
+preflight: reset
 	curl -fsS http://127.0.0.1:8080/healthz && curl -fsS http://127.0.0.1:8474/proxies/pg/toxics && echo
 
-# Calendar server and test inbox (the deployed worker and service: `$(COMPOSE) --profile resolve up -d`).
-resolve-up:
-	mkdir -p var/calendar var/mail
-	$(COMPOSE) --profile resolve up -d --build resolve-calendar resolve-mail
+pulse:
+	$(PY) -m harness pulse
 
-check: lint test no-sleep
+endpoints:
+	$(PY) -m harness endpoints
+
+calibrate:
+	$(PY) -m harness step-test --manifest manifests/exploratory/explore_v1.yaml
+
+verify-model:
+	$(PY) -m harness verify-model $(if $(MODEL),--model $(MODEL)) $(if $(CONTINUATION),--continuation $(CONTINUATION))
+
+goal: reset
+	$(PY) -m harness goal $(if $(TASK),--task $(TASK)) $(if $(MODEL),--model $(MODEL)) \
+		$(if $(CONTINUATION),--continuation $(CONTINUATION))
+
+# make trial CONDITION=agent GATE=off [MANIFEST=...] [REPEAT=1] [BLOCK=1]
+trial:
+	$(PY) -m harness trial --manifest $(MANIFEST) --condition $(CONDITION) --gate $(GATE) \
+		$(if $(REPEAT),--repeat $(REPEAT)) $(if $(BLOCK),--block $(BLOCK))
+
+# Re-analysis needs no model key and no running containers: it reads only the trial bundles.
+analyze:
+	uv run python -m harness analyze $(RUN)
+
+# Key-free check of saved evidence: raw checksums, then re-analysis must reproduce every saved version 1 result.
+verify:
+	uv run python -m harness analyze --strict $(RUN)
+
+report:
+	uv run python -m analysis.experiment_report $(RUN)
+
+bundle:
+	tar -czf runs.tar.gz runs/
 
 test:
 	uv run pytest -q
@@ -44,12 +82,20 @@ lint:
 no-sleep:
 	@! grep -rnE --include='*.py' 'sleep[[:space:]]*\(' backend/ || (echo "a sleep call found in backend/" && false)
 
-# Resolve. resolve-faults and resolve-form need no model. resolve-live, resolve-demo and resolve-eval use the local
-# model (Ollama) unless MODEL=muse-spark-1.3 (needs MODEL_API_KEY; paid, capped).
+check: lint test no-sleep
+
+# Resolve. resolve-demo and resolve-eval use the local model (Ollama, free); add MODEL=muse-spark-1.3 to use the Meta
+# API (needs MODEL_API_KEY; paid, capped by the scripts in scripts/resolve_*.sh). resolve-faults and resolve-form need
+# no model at all.
 resolve-ui:
 	uv run uvicorn resolve.app:app --host 127.0.0.1 --port 8090
 
-# The live demo screen on http://127.0.0.1:8092/ (scenario 2 loaded).
+# Calendar server and test inbox for Resolve (the deployed worker and service: `$(COMPOSE) --profile resolve up -d`).
+resolve-up:
+	mkdir -p var/calendar var/mail
+	$(COMPOSE) --profile resolve up -d --build resolve-calendar resolve-mail
+
+# The live screen on http://127.0.0.1:8092/ (scenario 2). MODEL=muse-spark-1.3 needs MODEL_API_KEY.
 resolve-live:
 	scripts/resolve_live_ui.sh --case D1 $(if $(MODEL),--model $(MODEL) --max-calls 20 --max-cost 0.45)
 

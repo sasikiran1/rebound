@@ -8,7 +8,7 @@
 |   found or expired"          |                                                 |
 | 504, other 400, anything else| no retry -> ProviderFailed                      |
 
-Observed during the study (tag study-final, docs/results.md): from exploration trial tr_0011 on, the provider
+Deviation from the original design (recorded in docs/results.md): from exploration trial tr_0011 on, the provider
 returned 400 "referenced response not found or expired" for continuations sent about 1 s after the referenced
 response was created (a stored-response read-after-write race; never at a real expiry age). It is retried like a 503.
 """

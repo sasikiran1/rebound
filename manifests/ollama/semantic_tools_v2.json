@@ -1,0 +1,9 @@
+{"declared": "2026-10-28 ~10:40 EDT, before any run of this plan",
+ "purpose": "Tool-information intervention, evaluated separately from the gate. Afternoon-only cases where no 15:00 slot is visible under the 4,096-byte cap. Only the tool schema changes between settings: v1 (control, same rebuilt image), v2_time (optional start_after/start_before), v2_page (optional offset). Everything else as semantic_v1 ctx16k.",
+ "runs": [
+  {"models": ["qwen3.5-9b-16k:latest", "gemma4-12b-16k:latest", "qwen2.5-14b-8k:latest", "qwen3-14b-16k:latest"],
+   "settings": [{"name": "v1", "tools": "prompts/tools_v1.json", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": false},
+                {"name": "v2_time", "tools": "prompts/tools_v2_time.json", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": false},
+                {"name": "v2_page", "tools": "prompts/tools_v2_page.json", "options": {"temperature": 0, "seed": 41, "num_ctx": 16384}, "num_predict": 1536, "think": false}],
+   "cases": ["LATE_A", "LATE_B"]}
+ ]}

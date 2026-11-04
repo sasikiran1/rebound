@@ -1,0 +1,11 @@
+{
+  "per_model": {
+    "gemma4": {
+      "goals": 6,
+      "C": 4.5,
+      "L_s": 2.04
+    }
+  },
+  "rule": "floor_0.01(0.35 / (C * L)) of the slower model",
+  "goals_per_s": 0.03
+}
