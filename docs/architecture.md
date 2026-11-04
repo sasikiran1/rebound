@@ -79,7 +79,7 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 
 | Failure | What happens | Tested by |
 |---|---|---|
-| FieldDesk slow or down (search or write times out, 5xx) | Request released back to `ready` with a backoff (Retry-After, or 1 s doubling to 30 s with jitter); a write in doubt keeps its attempt record | demo outage; `lost_ack`; `backoff` |
+| FieldDesk slow or down (search or write times out, 5xx) | Request released back to `ready` with a backoff (the server's Retry-After in full, or 1 s doubling to 30 s with jitter); a write in doubt keeps its attempt record | demo outage; `lost_ack`; `backoff` |
 | Worker dies after claiming | Lease expires; another worker claims and runs from the start | `crash_after_claim` |
 | Worker dies after recording the attempt, before sending | Next claim resends the recorded slot with the same key; it commits once | `crash_after_record` |
 | Worker dies after the write committed | Next claim resends with the same key; FieldDesk returns the original change (`replayed`) | `crash_after_send`, demo |
@@ -95,12 +95,13 @@ Resolve; the study's design is in [spec.md](spec.md) and [protocol.md](protocol.
 | Database link silent during the search | Timeout; request released; booked once the link is back | `fault_shapes` |
 | Mail server refuses or is down | The message stays queued with its error; retried with backoff (5 s, 10 s, ...); failed after 6 attempts | `notifications` |
 | Calendar server down when the booking completes | Booking unaffected; the calendar sync stays queued and catches up; stale copies in other technicians' calendars removed | `calendar` |
-| Customer corrects the request while a write is in doubt | The old version's attempt is never resent: its key is voided at FieldDesk (reports the change if it committed; otherwise a late copy is refused with `key_voided`); then the new version runs | `superseded_attempt`, `superseded_committed` |
-| Worker pauses past its lease (GC, CPU starvation) | Another worker claims a new lease generation; the paused worker's renew before the POST fails, so it never sends, and its writes no longer match the generation | `stale_worker` |
+| Customer corrects or declines while a write is in doubt | The conversation voids the old key before the turn takes effect (a late copy is then refused with `key_voided`); if FieldDesk is unreachable the correction or close waits as pending, and the worker settles the write first, then applies it and tells the customer if the write had gone through. The old version's attempt is never resent | `superseded_attempt`, `superseded_committed`, `correction_settles_first`, `correction_waits_for_settlement`, `decline_settles` |
+| Worker pauses past its lease (GC, CPU starvation) | Another worker claims a new lease generation; the paused worker's renew before the POST (or resend) fails, so it does not send, and its store writes no longer match the generation. A POST already in flight is not fenced by the lease; the key and voiding cover it | `stale_worker` |
 | Crash between a state change and the customer message | Not possible: state, assistant turn and notification are one transaction | `atomic_question` |
 
 Guarantee, as tested: with FieldDesk's idempotency keys and key fencing, every injected crash point ends with at most
-one applied change, and a write superseded by a newer approved version is never resent and cannot land late. This
+one applied change; a superseded write is never resent; and a correction or decline takes effect only after the
+earlier write is settled, so an old write never commits after the correction took effect. This
 is duplicate suppression and recovery under the tested conditions, not a general exactly-once claim. Not covered:
 multi-tenant isolation, a shared spending limit across processes, failure of the PostgreSQL instance itself, and
 recovery of notifications or calendar syncs that exhausted their retries (they stay `failed` for an operator).

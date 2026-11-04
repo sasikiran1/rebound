@@ -50,9 +50,15 @@ def default_owner() -> str:
 
 
 def backoff_s(retries: int, retry_after: float | None) -> float:
+    """The server's Retry-After is a minimum and is honored in full; the cap applies only to the local fallback
+    (1 s doubling to 30 s, with jitter)."""
     if retry_after is not None and retry_after > 0:
-        return min(retry_after, BACKOFF_MAX_S)
+        return retry_after
     return min(BACKOFF_MAX_S, BACKOFF_BASE_S * 2 ** retries) * random.uniform(0.8, 1.2)
+
+
+class LeaseLost(Exception):
+    """The worker no longer holds the request's lease: it must not send."""
 
 
 def _exit(point: str) -> None:
@@ -86,6 +92,8 @@ class Worker:
         again then returns the committed change (`replayed`). Anything else propagates."""
         args = (req["appointment_id"], req["customer_id"], req["attempt_slot"], req["attempt_key"])
         for n in range(3):
+            if not await self.store.renew(req["request_id"], self.owner, req["lease_gen"], self.lease_s):
+                raise LeaseLost()
             try:
                 return await self.api.reschedule(*args)
             except ApiError as exc:
@@ -116,38 +124,77 @@ class Worker:
         return {"request_id": rid, "result": "completed" if ok else "lease_lost", "change_id": res["change_id"],
                 "slot_id": slot_id, "replayed": res.get("replayed"), "how": how}
 
-    async def _settle_superseded(self, req: dict) -> dict | None:
-        """The unconfirmed attempt belongs to an older version: void its key instead of resending it. Returns a
-        result to stop with, or None to go on with the current version."""
+    async def _settle_superseded(self, req: dict) -> tuple[dict | None, dict | None]:
+        """The unconfirmed attempt must not run any more (a correction or a close is waiting, or it belongs to an
+        older version): void its key instead of resending it. Returns (result to stop with, or None; FieldDesk's
+        answer: applied with the change, or voided)."""
         rid = req["request_id"]
         try:
             res = await self.api.void_key(req["attempt_key"])
         except ApiError as exc:
-            return await self._release(req, f"settle superseded attempt: {exc.status}", exc)
+            return await self._release(req, f"settle earlier attempt: {exc.status}", exc), None
         await self.store.event(rid, "worker.superseded_attempt", outcome=res["outcome"], key=req["attempt_key"],
                                slot_id=req["attempt_slot"], change_id=(res.get("change") or {}).get("change_id"))
         if not await self.store.record_attempt(rid, self.owner, None, None, None, gen=req["lease_gen"]):
-            return {"request_id": rid, "result": "lease_lost"}
-        return None
+            return {"request_id": rid, "result": "lease_lost"}, res
+        return None, res
+
+    async def _moved_note(self, req: dict, names: dict) -> str:
+        try:
+            appt = await self.api.appointment(req["appointment_id"])
+            where = describe({k: appt[k] for k in ("slot_id", "starts_at", "technician_id")}, names)
+        except (ApiError, KeyError):
+            where = "the time I had already sent"
+        return (f"The change I had already sent went through before I could stop it, so your appointment is now "
+                f"{where}.")
 
     async def process(self, req: dict) -> dict:
         rid, version = req["request_id"], req["version"]
         key = f"resolve:{rid}:v{version}"
         gen = req["lease_gen"]
         await self.store.event(rid, "worker.claimed", owner=self.owner, version=version, gen=gen,
-                               pending_attempt=req["attempt_state"])
+                               pending_attempt=req["attempt_state"], pending_version=req.get("pending_version"),
+                               pending_close=bool(req.get("pending_close")))
         self._maybe_crash("after_claim")
-        intent = await self.store.intent(rid, version)
         facts = req["facts"]
         names = {t["technician_id"]: t["name"] for t in facts["technicians"]}
 
-        if req["attempt_state"] == "sending" and req["attempt_key"] != key:  # 1a. superseded: void, never resend
-            stop = await self._settle_superseded(req)
+        # 1a. A correction or a close is waiting, or the attempt is from an older version: settle, never resend.
+        waiting = req.get("pending_version") or req.get("pending_close")
+        settled = None
+        if req["attempt_state"] == "sending" and (waiting or req["attempt_key"] != key):
+            stop, settled = await self._settle_superseded(req)
             if stop is not None:
                 return stop
-        elif req["attempt_state"] == "sending":  # 1b. reconcile an uncertain attempt of this version
+            req = {**req, "attempt_state": None}
+        note = await self._moved_note(req, names) if settled and settled["outcome"] == "applied" else None
+        if req.get("pending_close"):  # the customer declined (or the request could not continue): close it now
+            pc = req["pending_close"]
+            text = f"{note} {pc.get('text_if_applied', '')}".strip() if note else pc["text"]
+            await self.store.set_state(rid, "unresolved", owner=self.owner, gen=gen, detail=pc["detail"],
+                                       pending_close=None, turn=(text, "unresolved"))
+            await self.store.event(rid, "worker.closed_after_settling", outcome=settled and settled["outcome"])
+            return {"request_id": rid, "result": "unresolved", "reason": pc["detail"],
+                    "settled": settled and settled["outcome"]}
+        if req.get("pending_version"):  # the correction takes effect only now, after the old write is settled
+            version = await self.store.promote(rid, self.owner, gen)
+            if version is None:
+                return {"request_id": rid, "result": "lease_lost"}
+            req = {**req, "version": version, "pending_version": None}
+            key = f"resolve:{rid}:v{version}"
+            await self.store.event(rid, "worker.correction_applied", version=version,
+                                   earlier_write=settled and settled["outcome"])
+            if note:
+                await self.store.add_turn(rid, "assistant", f"{note} I'm now applying your update.", "info")
+        intent = await self.store.intent(rid, version)
+
+        if req["attempt_state"] == "sending":  # 1b. reconcile an uncertain attempt of this version
             try:
                 res = await self._resend(req)
+            except LeaseLost:
+                await self.store.event(rid, "worker.lease_lost_before_send", owner=self.owner, gen=gen,
+                                       slot_id=req["attempt_slot"], resend=True)
+                return {"request_id": rid, "result": "lease_lost"}
             except ApiError as exc:
                 if exc.uncertain or exc.body.get("type") == "same_slot":
                     return await self._release(req, f"reconcile: {exc.status} {exc.body.get('type', '')}".strip(),

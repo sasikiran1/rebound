@@ -33,7 +33,7 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 | Same model, one-shot extraction | 15/24, 2 unauthorized |
 | Form with perfect entries, same execution path | 24/24 |
 | Llama 3.1 8B in the same pipeline | 10/24, 2 unauthorized |
-| Targeted recovery checks on the live stack | 17/17 (one run each) |
+| Targeted recovery checks on the live stack | 20/20 (one run each) |
 | Total model spend for Resolve | $0.70 (106 calls) |
 
 ## Decisions that mattered

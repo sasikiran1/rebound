@@ -134,7 +134,19 @@ holds it to a schema: most of its failures are refusals to book, not wrong booki
 | dev-r4 | qwen2.5-14b / gemma4-12b, v2 | 2/6 / 3/6 | 2 / 1 |
 | muse-dev | Muse Spark 1.3, v2 | 6/6 | 0 |
 
-## Recovery checks (live stack, `runs/resolve/faults/faults-r8`)
+## Recovery checks (live stack, `runs/resolve/faults/faults-r11`)
+
+**20 of 20 pass** (targeted checks, one run each). A second review pass found the first fix below incomplete, and
+all three points were real: a correction could take effect while the old write was still unsettled (an old write
+could commit after the correction); declining closed the request without settling a write in doubt; and a
+server's Retry-After over 30 s was shortened to 30 s (HTTP-date values were ignored). Now a customer turn settles
+the write in doubt before it takes effect; if FieldDesk cannot be reached, the correction or close waits as
+pending and the worker settles first. New checks: `correction_settles_first`, `correction_waits_for_settlement`
+(the v1 write commits after the correction was received; v2 stays pending and takes effect only after it; the
+customer is told), `decline_settles` (FieldDesk reachable: nothing changes and a late v1 write is refused;
+unreachable: the worker settles, finds the write went through, and says so). Retry-After is honored in full.
+
+### First pass (`faults-r8`)
 
 **17 of 17 pass** (targeted checks, one run each; they show the mechanism under the injected conditions, not a
 reliability rate). Run 8 follows an outside review of the code on Nov 3 that found four defects; all four were real and

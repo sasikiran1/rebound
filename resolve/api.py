@@ -14,6 +14,23 @@ import httpx
 PAGE = 50  # FieldDesk SEARCH_LIMIT
 
 
+def parse_retry_after(value: str | None, now: float | None = None) -> float | None:
+    """Seconds to wait from a Retry-After header: delay-seconds or an HTTP-date (RFC 9110). None if absent or bad."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    from email.utils import parsedate_to_datetime
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when is None or when.tzinfo is None:
+        return None
+    return max(0.0, when.timestamp() - (time.time() if now is None else now))
+
+
 class ApiError(Exception):
     def __init__(self, status: str, http_status: int | None, message: str, body: dict | None = None,
                  retry_after: float | None = None):
@@ -67,11 +84,8 @@ class FieldDesk:
         err = data.get("error", {}) if isinstance(data, dict) else {}
         entry.update(status=f"http_{r.status_code}", error=err.get("type"))
         self.log.append(entry)
-        try:
-            retry_after = float(r.headers["Retry-After"]) if "Retry-After" in r.headers else None
-        except ValueError:  # an HTTP-date form; treat as absent
-            retry_after = None
-        raise ApiError(f"http_{r.status_code}", r.status_code, err.get("message", ""), err, retry_after)
+        raise ApiError(f"http_{r.status_code}", r.status_code, err.get("message", ""), err,
+                       parse_retry_after(r.headers.get("Retry-After")))
 
     async def context(self, customer_id: int) -> dict:
         return await self._call("context", "GET", f"/customers/{customer_id}/context")
