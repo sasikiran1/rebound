@@ -336,8 +336,8 @@ class Live:
         retries = await self.store.pool.fetchval("SELECT count(*) FROM resolve.events WHERE request_id = $1 AND "
                                                  "kind = 'worker.retry_later'", self.rid)
         self.results.setdefault(self.case.id, {})[self.lane] = {
-            "verdict": v["verdict"], "final": final if v["changes"] else None, "questions": req["questions_asked"],
-            "retries": retries, "crash": self.crashed, "request_id": self.rid}
+            "verdict": v["verdict"], "final": final if v["changes"] else None, "model": self.model_name,
+            "questions": req["questions_asked"], "retries": retries, "crash": self.crashed, "request_id": self.rid}
         why = ("the customer never authorized that slot" if v["unauthorized"] else
                f"{v['changes']} change row(s)" + (", the slot the customer wanted" if good and v["changes"] else ""))
         self.out("SQL check", f"{BOLD}{text}{OFF}{GREEN if good else RED}: appointment is {final}; {why}",

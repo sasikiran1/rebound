@@ -33,7 +33,7 @@ and the steps in plain language with the ones Rebound performs tagged REBOUND (c
 Below that: the conversation and the quoted rules, the technicians' calendars read from FieldDesk's database with the
 CalDAV calendar marked `CAL`, the database check (SQL) and the engineer log.
 
-Buttons: scenario, **✗ Without Rebound** / **✓ With Rebound** (each re-seeds the same world), **▶ Play scenario**
+Buttons: scenario, **One-shot baseline** (same model, one call: no booking history, no repair turn, no questions, no confirmation; same validator and worker) / **Rebound** (each re-seeds the same world); **Story view** (key V) hides the step list, rules and engineer log for recording, **▶ Play scenario**
 (runs the scenario's plan: the problems it injects, the case file's customer lines, and a correction instead of a yes
 when the proposed slot is not one the case file authorizes), **Booking system down** (Toxiproxy), **Someone takes the
 slot** (another customer books the contested slot), **Crash after booking** (the next booking runs in a separate
@@ -41,15 +41,15 @@ worker process that exits right after its POST; the page's worker waits out the 
 key). Chips under the input fill in the case file's lines; anything typed is a real customer message.
 
 Failure, then fix (scenario 1, case H15):
-1. **✗ Without Rebound**, send "Keep the same time of day as my current booking, just move it to Friday." It books at once.
+1. **One-shot baseline**, send "Keep the same time of day as my current booking, just move it to Friday." It books at once.
    On Muse, Nov 3: read as "before 12:00", booked Fri 09:00 with Mila; the slot turned red, Mila's CalDAV calendar
    moved to Fri 09:00, SQL check UNAUTHORIZED BOOKING ($0.009, 1 call).
-2. **✓ With Rebound**, the same message. It proposes a slot and asks; if it proposes Fri 09:00, answer "No, keep 10:30 like
+2. **Rebound**, the same message. It proposes a slot and asks; if it proposes Fri 09:00, answer "No, keep 10:30 like
    my current booking. Any technician is fine."; it proposes Fri 10:30 with Ken (purple, waiting for yes).
 3. **Booking system down**, then "Yes, please book it.": the worker and API steps turn amber and wait; nothing is written.
    Click it again: booked, green, Ken's calendar, SQL check CORRECT.
 
-Everything at once (scenario 2, case D1; **▶ Play scenario** does all of this): **✓ With Rebound**, **Booking system
+Everything at once (scenario 2, case D1; **▶ Play scenario** does all of this): **Rebound**, **Booking system
 down**, send the message; while it waits press **Someone takes the slot** (Fri 15:30 Dana turns amber); click
 **Booking system down** again to restore it. Nothing authorized is left, so it asks; answer "Monday is okay, but not
 before four."; it proposes Mon 16:30 with Alex. Press **Crash after booking**, then "Yes, please book it.". Rehearsed twice on the local model, Nov 3: the worker process died after its POST (1 change row, answer not

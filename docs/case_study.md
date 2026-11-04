@@ -27,13 +27,13 @@ API pushed back with 503 and Retry-After, the agents retried early every single 
 | With a runtime guard | 0 early, 209/209 correct goals |
 | Admission gate, recovery after a 10 s fault | 20–22 s to 10 s (the metric's floor) |
 | Original thesis, "agents delay recovery" | **not supported**: agents were under 2% of in-flight time |
-| Resolve, 24 frozen held-out conversations, Muse | **23/24 correct, 1 unauthorized booking**, $0.23 |
-| Same, customer confirms the exact slot first | **23/24, 0 unauthorized** |
+| Resolve, 24 frozen held-out conversations, Muse | **23/24 correct** (19 bookings + 4 correct refusals), **1 unauthorized booking**, $0.23 |
+| Same, customer confirms the exact slot first (simulated customer who reads every proposal) | **23/24, 0 unauthorized** |
 | Hand-written rule parser, frozen before held-out | 20/24, 2 unauthorized |
 | Same model, one-shot extraction | 15/24, 2 unauthorized |
 | Form with perfect entries, same execution path | 24/24 |
 | Llama 3.1 8B in the same pipeline | 10/24, 2 unauthorized |
-| Recovery checks on the live stack | 12/12 |
+| Targeted recovery checks on the live stack | 17/17 (one run each) |
 | Total model spend for Resolve | $0.70 (106 calls) |
 
 ## Decisions that mattered
