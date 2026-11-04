@@ -46,6 +46,9 @@ header h1 { font-size: 17px; margin: 0 6px 0 0; white-space: nowrap; }
 body.rec main { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.5fr) minmax(0, .9fr); }
 body.rec main > section:nth-child(2), body.rec .card:has(#rules), body.rec .card:has(#feed),
 body.rec #chips, body.rec .faults, body.rec #sqltext, body.rec #rows { display: none; }
+.reccap { display: none; position: fixed; right: 16px; bottom: 12px; z-index: 5; font-size: 13px; font-weight: 600;
+  padding: 5px 10px; border-radius: 6px; background: var(--ink); color: var(--panel); opacity: .9; }
+body.rec .reccap { display: block; }
 body.rec { font-size: 15.5px; } body.rec .now { font-size: 20px; } body.rec .bubble { font-size: 16px; }
 body.rec .slot { font-size: 12.5px; } body.rec .verdict { font-size: 24px; padding: 18px 12px; }
 #view.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
@@ -297,6 +300,7 @@ th { color: var(--muted); font-weight: 500; }
     </div>
   </section>
 </main>
+<div class="reccap" id="reccap"></div>
 <div class="toast" id="toast"></div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -624,6 +628,8 @@ function renderChips(R) {
 }
 function renderTop(R) {
   const ss = S.session;
+  const local = !/^muse/i.test(ss.model || "");
+  put("reccap", `Synthetic customer · real model, API and faults · model: ${esc(ss.model)}${local ? " (local)" : ""} · recorded run`);
   $("naive").classList.toggle("on", ss.lane === "naive");
   $("resolve").classList.toggle("on", ss.lane === "resolve");
   $("outage").classList.toggle("on", ss.outage); $("outage").textContent = ss.outage ? "Booking system DOWN (restore)" : "Booking system down";

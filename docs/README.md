@@ -11,6 +11,7 @@
 | [FREEZE.md](FREEZE.md) | Freeze record for eval-v1 |
 | [agent_v2_protocol.md](agent_v2_protocol.md) | Pass marks for the hardened-agent study, fixed before its paid runs |
 | [demo.md](demo.md) | Three-minute demo script |
+| [recording_runbook.md](recording_runbook.md) | How to record the live screen: setup, Story view and Play, manual walkthrough, fallbacks |
 | [ollama_protocol.md](ollama_protocol.md), [OLLAMA_FREEZE.md](OLLAMA_FREEZE.md) | Rules and freeze record for the local-model study |
 | [commit_map.txt](commit_map.txt) | Maps commit hashes recorded in trial bundles to current commits |
 | [spec.md](spec.md) | Original design; where it disagrees with the code or `protocol.md`, those win |
