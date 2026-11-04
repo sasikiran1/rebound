@@ -67,7 +67,7 @@ def slot_label(case: C.Case, key: str) -> str:
 
 class Live:
     def __init__(self, case: C.Case, model_name: str, max_calls: int, max_cost: float, echo: bool = True):
-        self.model_name = model_name
+        self.model_name, self.max_calls, self.max_cost = model_name, max_calls, max_cost
         self.model = make_model(model_name, Path("runs/resolve/live/raw"), max_calls, max_cost)
         self.echo = echo  # print to the terminal; the browser reads `feed`
         self.feed: list[dict] = []

@@ -316,6 +316,11 @@ async function post(url, body) {
   if (!r.ok) { let d = ""; try { d = (await r.json()).detail; } catch (e) {} toast(d || `HTTP ${r.status}`); throw new Error(d); }
   return r.json();
 }
+function modelName(m) {
+  if (!m) return "";
+  const muse = /^muse-spark-(.+)$/i.exec(m);
+  return muse ? `Meta Muse Spark ${muse[1]}` : `${m} (local)`;
+}
 function when(iso) { const d = new Date(iso); return `${DOW[d.getDay()]} ${d.getDate()} ${iso.slice(11, 16)}`; }
 function techName(id) { const t = S.world.technicians.find((x) => x.technician_id === id); return t ? t.name : `#${id}`; }
 function slotLabel(slotId) {
@@ -497,8 +502,11 @@ function narrate(R) {
   const st = R ? R.state : null, sql = R && R.sql, E = R ? R.events : [];
   const v = R && R.versions.length ? R.versions[R.versions.length - 1] : null;
   const crashed = since().find((f) => f.tag === "crash" && f.kind === "bad");
-  if (!R || !R.turns.length) return {cls: "info", t: naive ? `<b>One-shot baseline</b> (${esc(ss.model)}): reads ${esc(who)}'s message once, with no booking history, no questions and no confirmation, then books.` : `<b>Rebound</b> (same model, ${esc(ss.model)}): grounded in booking history, asks when unsure, confirms the exact slot before writing.`, s: `${esc(who)}'s current appointment: ${esc(W.current || "")}.`};
-  if (ss.busy) return {cls: "info", t: `The AI is reading ${esc(who)}'s message…`, s: ""};
+  if (!R || !R.turns.length) return {cls: "info", t: naive ? `<b>One-shot baseline</b> (${esc(modelName(ss.model))}): reads ${esc(who)}'s message once, with no booking history, no questions and no confirmation, then books.` : `<b>Rebound</b> (same model, ${esc(modelName(ss.model))}): grounded in booking history, asks when unsure, confirms the exact slot before writing.`, s: `${esc(who)}'s current appointment: ${esc(W.current || "")}.`};
+  if (ss.busy) return {cls: "info", t: `${esc(modelName(ss.model))} is reading ${esc(who)}'s message…`, s: ""};
+  const problem = [...since()].reverse().find((f) => f.tag === "!");
+  if (problem && (!R || !R.turns.length || R.state === "ready" || R.state === "needs_input") && /model|budget/i.test(problem.text))
+    return {cls: "warn", t: `⚠ ${esc(problem.text)}`, s: "Nothing was booked. Send the message again, or restart the screen with a higher cap."};
   if (st === "completed" || st === "unresolved") {
     const vd = sql ? sql.verdict : null;
     const final = vd && vd.final_slot ? prettyAlias(vd.final_slot) : null;
@@ -521,7 +529,7 @@ function resultCard(lane, r) {
   if (!r) return `<div class="res"><div class="h">${title}</div><div class="v" style="color:var(--muted)">not run yet</div></div>`;
   const ok = ["correct", "correct_no_booking"].includes(r.verdict);
   const v = r.verdict === "correct" ? `✓ Right: ${esc(r.final)}` : r.verdict === "unauthorized" ? `✗ Wrong: ${esc(r.final)}` : r.final ? `${esc(PLAIN[r.verdict])}: ${esc(r.final)}` : esc(PLAIN[r.verdict]);
-  const x = [r.questions ? `asked ${r.questions}×` : (lane === "naive" ? "never asked" : ""), r.retries ? `waited through the outage (${r.retries} retries)` : "", r.crash ? "survived a crash, booked once" : "", r.verdict === "unauthorized" ? "customer never agreed" : "", r.model ? `model ${esc(r.model)}` : ""].filter(Boolean).join(" · ");
+  const x = [r.questions ? `asked ${r.questions}×` : (lane === "naive" ? "never asked" : ""), r.retries ? `waited through the outage (${r.retries} retries)` : "", r.crash ? "survived a crash, booked once" : "", r.verdict === "unauthorized" ? "customer never agreed" : "", r.model ? esc(modelName(r.model)) : ""].filter(Boolean).join(" · ");
   return `<div class="res ${ok ? "good" : "bad"}"><div class="h">${title}</div><div class="v">${v}</div><div class="x">${x}</div></div>`;
 }
 function renderStory(R) {
@@ -628,8 +636,7 @@ function renderChips(R) {
 }
 function renderTop(R) {
   const ss = S.session;
-  const local = !/^muse/i.test(ss.model || "");
-  put("reccap", `Synthetic customer · real model, API and faults · model: ${esc(ss.model)}${local ? " (local)" : ""} · recorded run`);
+  put("reccap", `Synthetic customer · real model, API and faults · ${esc(modelName(ss.model))} · recorded run`);
   $("naive").classList.toggle("on", ss.lane === "naive");
   $("resolve").classList.toggle("on", ss.lane === "resolve");
   $("outage").classList.toggle("on", ss.outage); $("outage").textContent = ss.outage ? "Booking system DOWN (restore)" : "Booking system down";
@@ -639,7 +646,8 @@ function renderTop(R) {
   $("play").classList.toggle("on", play); $("play").textContent = play ? "■ Stop" : "▶ Play scenario";
   $("send").disabled = ss.busy;
   if (!cache._caseSet) { $("case").value = S.world.case; cache._caseSet = true; }
-  put("meta", `AI model <b>${esc(ss.model)}</b> · ${ss.model_calls} call(s) · $${ss.model_cost_usd.toFixed(4)}<br>synthetic data${ss.request_id ? ` · ${esc(ss.request_id)}` : ""}`);
+  const cap = ss.max_cost_usd != null ? ` of $${Number(ss.max_cost_usd).toFixed(2)} cap` : "";
+  put("meta", `AI model <b>${esc(modelName(ss.model))}</b> · ${ss.model_calls}${ss.max_calls ? `/${ss.max_calls}` : ""} call(s) · $${ss.model_cost_usd.toFixed(3)}${cap}<br>synthetic data${ss.request_id ? ` · ${esc(ss.request_id)}` : ""}`);
   put("reqstate", R ? esc(R.state.replace("_", " ")) : "");
 }
 

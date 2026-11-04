@@ -62,7 +62,9 @@ async def lifespan(app):
             cases[c.id] = (split, c)
     live["cases"] = cases
     async with A.lifespan(app):  # the Resolve screen's reads (request detail, calendar, SQL verdict)
-        session = Live(cases["H15"][1], os.environ.get("RESOLVE_LIVE_MODEL", "qwen3-14b-16k:latest"),
+        first = os.environ.get("RESOLVE_LIVE_CASE", "H15")
+        session = Live(cases[first if first in cases else "H15"][1],
+                       os.environ.get("RESOLVE_LIVE_MODEL", "qwen3-14b-16k:latest"),
                        int(os.environ.get("RESOLVE_LIVE_MAX_CALLS", "40")),
                        float(os.environ.get("RESOLVE_LIVE_MAX_COST", "0.50")), echo=False)
         async with session:
@@ -231,6 +233,7 @@ async def state():
         req = None
     return {"session": {"lane": x.lane, "request_id": x.rid, "outage": x.outage, "busy": x.busy,
                         "crash_armed": x.crash_next, "model": x.model_name, "model_calls": len(x.model.log.calls),
-                        "model_cost_usd": round(x.model.log.cost, 4)},
+                        "model_cost_usd": round(x.model.log.cost, 4), "max_calls": x.max_calls,
+                        "max_cost_usd": x.max_cost},
             "feed": x.feed[-150:], "world": await world(x), "request": req,
             "results": x.results.get(x.case.id, {})}

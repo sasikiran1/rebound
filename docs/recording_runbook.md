@@ -11,14 +11,14 @@ Goal: show that customer permission survives an outage, changed availability and
 3. If the running server already uses the intended model, keep it. Otherwise start it from WSL in `~/rebound`:
 
    ```bash
-   scripts/resolve_live_ui.sh --model muse-spark-1.3 --max-calls 20 --max-cost 0.50
+   scripts/resolve_live_ui.sh --model muse-spark-1.3 --max-calls 20 --max-cost 0.45 --case D1
    ```
 
    The model key must already be in `.env`. The script stops the `resolve-worker` container so it cannot take the
    demonstration's requests. Scenario 2 costs 2 model calls per take on Muse (the opening message and the reply; a
    plain "yes" needs no model call), about $0.02 to $0.03.
 4. Dismiss the introduction.
-5. Select "2 · Messy request + system down + slot taken + crash".
+5. Select "2 · Messy request + system down + slot taken + crash" (already selected when started with `--case D1`).
 6. Click **Rebound** explicitly: changing scenarios keeps the previous lane.
 7. Rehearse once before recording.
 
