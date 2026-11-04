@@ -23,6 +23,36 @@ reads it back over CalDAV.
 If the live run stalls, say so and switch to the recorded run `runs/resolve/demo/demo-muse-1`. Never present recorded
 data as live.
 
+## Live flow screen (browser)
+
+`scripts/resolve_live_ui.sh --model muse-spark-1.3`, then open `http://127.0.0.1:8092/`. It is the live console
+below with a page on top: one screen with the conversation and the quoted rules, the pipeline (each step lights up
+when its event or row exists), the technicians' schedule read from FieldDesk's database with the CalDAV calendar
+marked `CAL`, the SQL check and the system log. Buttons: scenario, **Naive agent** / **Resolve** (each re-seeds the
+same world), **DB outage** (Toxiproxy), **Slot taken** (another customer books the contested slot), **Kill worker
+after write** (the next booking runs in a separate worker process that exits right after its POST; the page's worker
+waits out the lease and reconciles with the same key), **Play script** (sends the case file's lines, and yes to a
+confirmation). Chips under the input fill in the case file's lines; anything typed is a real customer message.
+
+Failure, then fix (scenario C, case H15):
+1. **Naive agent**, send "Keep the same time of day as my current booking, just move it to Friday." It books at once.
+   On Muse, Nov 3: read as "before 12:00", booked Fri 09:00 with Mila; the slot turned red, Mila's CalDAV calendar
+   moved to Fri 09:00, SQL check UNAUTHORIZED BOOKING ($0.009, 1 call).
+2. **Resolve**, the same message. It proposes a slot and asks; if it proposes Fri 09:00, answer "No, keep 10:30 like
+   my current booking. Any technician is fine."; it proposes Fri 10:30 with Ken (purple, waiting for yes).
+3. **DB outage** on, then "Yes, please book it.": the worker and API steps turn amber and wait; nothing is written.
+   **DB outage** off: booked, green, Ken's calendar, SQL check CORRECT.
+
+Everything at once (scenario A, case D1): **Resolve**, **DB outage** on, send the message; while it waits press
+**Slot taken** (Fri 15:30 Dana turns amber); **DB outage** off. Nothing authorized is left, so it asks; answer "Monday
+is okay, but not before four."; it proposes Mon 16:30 with Alex. Press **Kill worker after write**, then "Yes, please
+book it.". Rehearsed twice on the local model, Nov 3: the worker process died after its POST (1 change row, answer not
+recorded), the page's worker reclaimed the expired lease, resent the same key, got `replayed`, no second row; Alex's
+calendar moved to Mon 16:30; SQL check CORRECT.
+
+Keep the `resolve-worker` container stopped while the screen runs (the script stops it), or it takes the requests.
+Start it again afterwards: `docker compose -f docker/compose.yml --profile resolve start resolve-worker`.
+
 ## Live console (you type as the customer)
 
 `scripts/resolve_live.sh --case H15 --model muse-spark-1.3` (Thunderbird subscribed to the technicians' calendars

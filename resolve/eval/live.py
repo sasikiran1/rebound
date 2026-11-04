@@ -8,6 +8,9 @@ Lanes (switching lanes re-seeds the case's world, so both start from the same ap
 Commands:
   /outage on | off   5 s latency on FieldDesk's database link (Toxiproxy): API calls time out, requests wait
   /take              another customer books the case's contested slots (if the case file names any)
+  /crash             the next booking runs in a separate worker process that kills itself right after its booking
+                     POST returns (before recording the answer); this console's worker then waits for that lease to
+                     expire and reconciles with the same idempotency key
   /script            the case file's customer messages
   /status            appointment, calendar and SQL check now
   /quit
@@ -16,6 +19,9 @@ Anything else is a customer message.
 The SQL check grades the booking against the case file: the slots this customer authorized (`expected.authorized`
 for the opening message; `expected.final`). It is meaningful when what you type means what the case file's customer
 means; the console prints the authorized slots so the audience can see what it is graded against.
+
+The browser version (resolve/eval/live_web.py) drives this same class; every line printed here is also kept in
+`Live.feed` for it.
 """
 
 from __future__ import annotations
@@ -23,6 +29,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import json
+import re
+import sys
+import time
 from pathlib import Path
 
 import asyncpg
@@ -45,10 +55,8 @@ from resolve.worker import Worker
 RED, GREEN, YELLOW, BLUE, DIM, BOLD, OFF = ("\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[2m", "\033[1m",
                                             "\033[0m")
 OUTAGE = "live_outage"
-
-
-def out(tag: str, text: str, color: str = "") -> None:
-    print(f"\r{color}{tag:>10}{OFF}  {text}", flush=True)
+ANSI = re.compile(r"\033\[[0-9;]*m")
+KIND = {RED: "bad", GREEN: "good", YELLOW: "warn", BLUE: "calendar", DIM: "dim", BOLD: "agent", "": "info"}
 
 
 def slot_label(case: C.Case, key: str) -> str:
@@ -58,9 +66,11 @@ def slot_label(case: C.Case, key: str) -> str:
 
 
 class Live:
-    def __init__(self, case: C.Case, model_name: str, max_calls: int, max_cost: float):
-        self.case, self.model_name = case, model_name
+    def __init__(self, case: C.Case, model_name: str, max_calls: int, max_cost: float, echo: bool = True):
+        self.model_name = model_name
         self.model = make_model(model_name, Path("runs/resolve/live/raw"), max_calls, max_cost)
+        self.echo = echo  # print to the terminal; the browser reads `feed`
+        self.feed: list[dict] = []
         self.lane: str | None = None
         self.rid: str | None = None
         self.n = 0
@@ -68,10 +78,28 @@ class Live:
         self.seen_turns = 0
         self.reported = True
         self.t_open: dt.datetime | None = None
+        self.texts: list[str] = []
+        self.busy = False  # a customer message is being interpreted
+        self.crash_next = False  # the next booking runs in a worker process that dies right after its POST
+        self.waiting_lease = False
+        self.use_case(case)
+
+    def use_case(self, case: C.Case) -> None:
+        self.case = case
+        self.names = {t["id"]: t["name"] for t in case.techs.values()}
+        self.roster = [{"technician_id": t["id"], "name": t["name"]} for t in case.techs.values()]
+
+    def out(self, tag: str, text: str, color: str = "") -> None:
+        self.feed.append({"at": time.time(), "lane": self.lane, "tag": tag, "text": ANSI.sub("", text),
+                          "kind": KIND.get(color, "info")})
+        del self.feed[:-400]
+        if self.echo:
+            print(f"\r{color}{tag:>10}{OFF}  {text}", flush=True)
 
     async def __aenter__(self):
         self.admin = await asyncpg.connect(settings.admin_dsn(settings.TRIAL_DB))
-        self.oracle = await asyncpg.connect(settings.oracle_dsn())
+        self.admin_lock = asyncio.Lock()  # one asyncpg connection: one operation at a time
+        self.oracle = await asyncpg.create_pool(settings.oracle_dsn(), min_size=1, max_size=3)
         self.store = await Store(settings.admin_dsn(settings.TRIAL_DB)).open()
         self.api = FieldDesk(settings.FIELDDESK_URL, actor="resolve-live")
         self.svc = Resolve(self.store, self.api, self.model, C.TODAY, C.HORIZON_DAYS)
@@ -79,8 +107,6 @@ class Live:
         self.tox_http = httpx.AsyncClient()
         self.tox = Toxiproxy(self.tox_http)
         self.calendar = CalendarSync.from_env(self.store, self.api)
-        self.names = {t["id"]: t["name"] for t in self.case.techs.values()}
-        self.roster = [{"technician_id": t["id"], "name": t["name"]} for t in self.case.techs.values()]
         return self
 
     async def __aexit__(self, *exc):
@@ -123,35 +149,49 @@ class Live:
 
     async def start_lane(self, lane: str) -> None:
         if self.outage:
-            out("!", "turn the outage off before switching lanes (the world is re-seeded through FieldDesk)", YELLOW)
+            self.out("!", "turn the outage off before switching lanes (the world is re-seeded through FieldDesk)",
+                     YELLOW)
             return
         self.lane, self.n = lane, self.n + 1
-        self.rid = f"live:{self.case.id}:{lane}:{dt.datetime.now():%H%M%S}"
-        await C.seed(self.admin, self.case)
-        await self.store.reset(self.rid)
+        self.rid = None  # the pump leaves the old request alone while the world is re-seeded
+        rid = f"live:{self.case.id}:{lane}:{dt.datetime.now():%H%M%S}"
+        async with self.admin_lock:
+            await C.seed(self.admin, self.case)
+        await self.store.reset(rid)
         self.facts = await self.svc.load_facts(self.case.customer_id, self.case.appointment_id)
         self.seen_turns, self.reported, self.t_open, self.texts = 0, True, None, []
+        self.crash_next = self.waiting_lease = False
+        self.rid = rid
         title = ("NAIVE AGENT: same model, one shot, books at once, never asks" if lane == "naive" else
                  "RESOLVE: grounded rules, asks when unsure, confirms the exact slot before writing")
-        print(f"\n{BOLD}{RED if lane == 'naive' else GREEN}== {title} =={OFF}  {DIM}request {self.rid}{OFF}")
-        self.banner()
+        self.out("lane", f"{title}; world re-seeded (case {self.case.id}); request {self.rid}",
+                 RED if lane == "naive" else GREEN)
+        if self.echo:
+            self.banner()
         if self.calendar is not None:
             try:
                 await self.calendar.mirror(self.case.appointment_id, self.roster)
-                out("calendar", await self.calendar_line(), BLUE)
+                self.out("calendar", await self.calendar_line(), BLUE)
             except (CalendarError, httpx.HTTPError) as exc:
-                out("calendar", f"unreachable ({type(exc).__name__}); continuing without it", YELLOW)
+                self.out("calendar", f"unreachable ({type(exc).__name__}); continuing without it", YELLOW)
                 await self.calendar.close()
                 self.calendar = None
 
     # --- customer --------------------------------------------------------------------------------------------------
     async def customer(self, text: str) -> None:
+        self.busy = True
+        try:
+            await self._customer(text)
+        finally:
+            self.busy = False
+
+    async def _customer(self, text: str) -> None:
         if self.lane is None:
-            out("!", "pick a lane first: /naive or /resolve", YELLOW)
+            self.out("!", "pick a lane first: /naive or /resolve", YELLOW)
             return
         req = await self.store.get(self.rid)
         if req is not None and req["state"] in TERMINAL:
-            out("!", f"this request is {req['state']}; /naive or /resolve starts again", YELLOW)
+            self.out("!", f"this request is {req['state']}; /naive or /resolve starts again", YELLOW)
             return
         self.texts.append(text)
         if self.t_open is None:
@@ -160,7 +200,7 @@ class Live:
         try:
             if self.lane == "naive":
                 if req is not None:
-                    out("naive", "already acted on the first message; it does not hold a conversation", DIM)
+                    self.out("naive", "already acted on the first message; it does not hold a conversation", DIM)
                     return
                 await self.store.create(self.rid, self.case.customer_id, self.case.appointment_id, self.case.region,
                                         self.case.service, C.TODAY, C.HORIZON_DAYS, self.facts)
@@ -170,34 +210,34 @@ class Live:
                 await self.store.event(self.rid, "interpret", attempts=res.attempts, problems=res.problems,
                                        intent=res.value)
                 if res.value is None:
-                    out("naive", "its reading was invalid, and it has no repair turn: gave up ("
+                    self.out("naive", "its reading was invalid, and it has no repair turn: gave up ("
                         + "; ".join(res.problems)[:200] + ")", RED)
                     await self.store.set_state(self.rid, "unresolved", detail="; ".join(res.problems)[:1000])
                 else:
-                    out("naive", "understood: " + I.explain(res.value, self.names), RED)
+                    self.out("naive", "understood: " + I.explain(res.value, self.names), RED)
                     await self.store.approve(self.rid, res.value, {"turn": 0, "by": "customer", "text": text}, None)
             elif req is None:
                 await self.svc.open(self.rid, self.case.customer_id, self.case.appointment_id, self.case.region,
                                     self.case.service, text, self.facts, confirm=True)
                 v = await self.store.get(self.rid)
                 if v["version"]:
-                    out("resolve", "understood: " + I.explain(await self.store.intent(self.rid, v["version"]),
+                    self.out("resolve", "understood: " + I.explain(await self.store.intent(self.rid, v["version"]),
                                                               self.names), GREEN)
             else:
                 res = await self.svc.customer_says(self.rid, text)
                 if res.get("diff"):
-                    out("resolve", f"changed version {res.get('version', '')}: {res['diff']}", GREEN)
+                    self.out("resolve", f"changed version {res.get('version', '')}: {res['diff']}", GREEN)
         except BudgetExceeded as exc:
-            out("!", f"model budget reached: {exc}", YELLOW)
+            self.out("!", f"model budget reached: {exc}", YELLOW)
         except ProviderFailed as exc:  # the model call failed; nothing was approved, the request is unchanged
-            out("!", f"model call failed ({str(exc)[:120]}); type the message again", YELLOW)
+            self.out("!", f"model call failed ({str(exc)[:120]}); type the message again", YELLOW)
             self.texts.pop()
             if req is None:  # the first message: start the request afresh
                 await self.store.reset(self.rid)
                 self.seen_turns, self.t_open = 0, None
         new = self.model.log.calls[calls:]
         if new:
-            out("model", f"{len(new)} call(s), {sum(c['latency_ms'] for c in new) / 1000:.1f} s; session "
+            self.out("model", f"{len(new)} call(s), {sum(c['latency_ms'] for c in new) / 1000:.1f} s; session "
                 f"{len(self.model.log.calls)} calls, ${self.model.log.cost:.4f}", DIM)
         self.reported = False
 
@@ -207,7 +247,7 @@ class Live:
             try:
                 await self._tick()
             except Exception as exc:  # keep the console alive; show what happened
-                out("!", f"{type(exc).__name__}: {exc}", YELLOW)
+                self.out("!", f"{type(exc).__name__}: {exc}", YELLOW)
                 await asyncio.sleep(1)
 
     async def _tick(self) -> None:
@@ -219,30 +259,70 @@ class Live:
         turns = await self.store.turns(rid)
         for t in turns[self.seen_turns:]:
             if t["role"] == "assistant":
-                out(self.lane, t["text"], BOLD)
+                self.out(self.lane, t["text"], BOLD)
         self.seen_turns = len(turns)
+        if req["state"] == "ready" and self.crash_next:
+            await self.crash_worker(rid)
+            return
+        if req["state"] == "claimed" and req["lease_owner"] != self.worker.owner:  # a dead worker's lease
+            if not self.waiting_lease:
+                self.waiting_lease = True
+                self.out("worker", f"{req['lease_owner']} holds the lease until "
+                         f"{req['lease_until']:%H:%M:%S}; {self.worker.owner} waits for it to expire, then "
+                         "reconciles", YELLOW)
+            res = await self.worker.run_once(rid)
+            if res:
+                self.out("worker", res["result"] + (f" ({res.get('how')})" if res.get("how") else "")
+                         + (f"; replayed={res['replayed']}" if "replayed" in res else ""), GREEN)
+            await asyncio.sleep(0.5)
+            return
         if req["state"] == "ready":
             res = await self.worker.run_once(rid)
             if res and res.get("result") == "retry_later":
-                out("worker", f"FieldDesk did not answer ({res['reason']}); the request waits and retries", YELLOW)
+                self.out("worker", f"FieldDesk did not answer ({res['reason']}); the request waits and retries", YELLOW)
                 await asyncio.sleep(2)
             elif res:
-                out("worker", res["result"] + (f" ({res.get('how')})" if res.get("how") else ""), DIM)
+                self.out("worker", res["result"] + (f" ({res.get('how')})" if res.get("how") else ""), DIM)
             return
         if req["state"] == "needs_input" and self.lane == "naive" and not self.reported:
             await self.store.set_state(rid, "unresolved", detail="one-shot agent cannot ask the customer")
-            out("naive", "would have needed to ask, but cannot: gave up", RED)
+            self.out("naive", "would have needed to ask, but cannot: gave up", RED)
             return
         if req["state"] in TERMINAL and not self.reported:
             self.reported = True
             await self.report()
         await asyncio.sleep(0.3)
 
+    async def crash_worker(self, rid: str) -> None:
+        """Run this booking in a separate worker process that exits (code 86, no cleanup, lease kept) right after its
+        booking POST returns. If it ends without booking (a question, or the outage), the crash stays armed."""
+        self.out("crash", "a separate worker process takes the request; it will die right after its booking POST "
+                 "returns, before recording the answer", YELLOW)
+        cmd = [sys.executable, "-m", "resolve.worker", "--request", rid, "--owner", "worker-crashing",
+               "--crash-at", "after_send", "--max-s", "40"]
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE)
+        stdout, _ = await proc.communicate()
+        lines = [json.loads(x) for x in stdout.decode().splitlines() if x.strip().startswith("{")]
+        if proc.returncode == 86:
+            self.crash_next = False
+            req = await self.store.get(rid)
+            async with self.oracle.acquire() as c:
+                n = await c.fetchval("SELECT count(*) FROM appointment_changes WHERE appointment_id = $1",
+                                     self.case.appointment_id)
+            self.out("crash", f"worker process {proc.pid} killed itself after the POST (exit 86): the booking "
+                     f"committed ({n} change row in SQL) but the worker never recorded it; attempt="
+                     f"{req['attempt_state']} key={req['attempt_key']}", RED)
+        else:
+            self.out("crash", f"worker process {proc.pid} exited {proc.returncode} without booking ("
+                     + ", ".join(x.get("result") or x.get("state") or "?" for x in lines) + "); crash still armed",
+                     DIM)
+
     async def report(self) -> None:
         if self.calendar is not None:
             synced = await self.calendar.drain(request_id=self.rid)
-            out("calendar", await self.calendar_line() + ("  (synced)" if synced["synced"] else ""), BLUE)
-        times = [self.t_open] if self.t_open else []
+            self.out("calendar", await self.calendar_line() + ("  (synced)" if synced["synced"] else ""), BLUE)
+        # every customer turn's database time: a later turn (an answer, a correction) can authorize more slots
+        times = [t["created_at"] for t in await self.store.turns(self.rid) if t["role"] == "customer"]
         v = await verdict(self.oracle, self.case, times)
         good = v["verdict"] in ("correct", "correct_no_booking")
         final = (slot_label(self.case, v["final_slot"]) if v["final_slot"] in self.case.slots
@@ -252,7 +332,7 @@ class Live:
                 "duplicate_effect": "DOUBLE BOOKING"}[v["verdict"]]
         why = ("the customer never authorized that slot" if v["unauthorized"] else
                f"{v['changes']} change row(s)" + (", the slot the customer wanted" if good and v["changes"] else ""))
-        out("SQL check", f"{BOLD}{text}{OFF}{GREEN if good else RED}: appointment is {final}; {why}",
+        self.out("SQL check", f"{BOLD}{text}{OFF}{GREEN if good else RED}: appointment is {final}; {why}",
             GREEN if good else RED)
 
     # --- commands --------------------------------------------------------------------------------------------------
@@ -266,28 +346,33 @@ class Live:
             if cmd[1] == "on" and not self.outage:
                 await self.tox.add_latency("pg", 5000, 0, name=OUTAGE)
                 self.outage = True
-                out("OUTAGE", "FieldDesk's database link now has 5 s latency: its API calls time out", YELLOW)
+                self.out("OUTAGE", "FieldDesk's database link now has 5 s latency: its API calls time out", YELLOW)
             elif cmd[1] == "off" and self.outage:
                 await self.tox.remove("pg", OUTAGE)
                 self.outage = False
-                out("recovered", "latency removed", GREEN)
+                self.out("recovered", "latency removed", GREEN)
         elif cmd[0] == "/take":
             if not self.case.taken:
-                out("!", "this case file names no contested slots", YELLOW)
+                self.out("!", "this case file names no contested slots", YELLOW)
             else:
-                await C.take(self.admin, self.case)
-                out("elsewhere", "another customer booked " + "; ".join(slot_label(self.case, k)
+                async with self.admin_lock:
+                    await C.take(self.admin, self.case)
+                self.out("elsewhere", "another customer booked " + "; ".join(slot_label(self.case, k)
                                                                         for k in self.case.taken), YELLOW)
+        elif cmd[0] == "/crash":
+            self.crash_next = True
+            self.out("crash", "armed: the next booking runs in a worker process that dies right after its POST",
+                     YELLOW)
         elif cmd[0] == "/script":
             for m in self.case.messages + self.case.replies:
                 print(f"           {DIM}{m}{OFF}")
         elif cmd[0] == "/status":
             req = await self.store.get(self.rid) if self.rid else None
-            out("status", f"lane={self.lane} state={req and req['state']} outage={self.outage}")
+            self.out("status", f"lane={self.lane} state={req and req['state']} outage={self.outage}")
             if req is not None and req["state"] in TERMINAL:
                 await self.report()
         else:
-            out("!", "unknown command; see the top of resolve/eval/live.py", YELLOW)
+            self.out("!", "unknown command; see the top of resolve/eval/live.py", YELLOW)
         return True
 
 
